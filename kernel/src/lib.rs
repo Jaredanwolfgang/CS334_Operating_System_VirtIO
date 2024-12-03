@@ -9,7 +9,6 @@
 #![allow(incomplete_features)]
 #![feature(btree_cursors)]
 #![feature(btree_extract_if)]
-#![feature(const_option)]
 #![feature(extend_one)]
 #![feature(fn_traits)]
 #![feature(format_args_nl)]
@@ -100,6 +99,7 @@ pub fn init() {
     sched::init();
     fs::rootfs::init(boot::initramfs()).unwrap();
     device::init().unwrap();
+    syscall::init();
     vdso::init();
     process::init();
 }
