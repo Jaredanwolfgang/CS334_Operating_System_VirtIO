@@ -9,6 +9,7 @@
 #![allow(incomplete_features)]
 #![feature(btree_cursors)]
 #![feature(btree_extract_if)]
+#![feature(debug_closure_helpers)]
 #![feature(extend_one)]
 #![feature(fn_traits)]
 #![feature(format_args_nl)]
@@ -29,15 +30,12 @@
 #![feature(trait_upcasting)]
 #![register_tool(component_access_control)]
 
-use core::sync::atomic::Ordering;
-
 use ostd::{
     arch::qemu::{exit_qemu, QemuExitCode},
     boot,
     cpu::PinCurrentCpu,
 };
 use process::Process;
-use sched::priority::PriorityRange;
 
 use crate::{
     prelude::*,
@@ -53,7 +51,6 @@ extern crate controlled;
 extern crate getset;
 
 pub mod arch;
-pub mod console;
 pub mod context;
 pub mod cpu;
 pub mod device;
@@ -79,14 +76,13 @@ pub fn main() {
     ostd::early_println!("[kernel] OSTD initialized. Preparing components.");
     component::init_all(component::parse_metadata!()).unwrap();
     init();
-    ostd::IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 
     // Spawn all AP idle threads.
     ostd::boot::smp::register_ap_entry(ap_init);
 
     // Spawn the first kernel thread on BSP.
     ThreadOptions::new(init_thread)
-        .priority(Priority::new(PriorityRange::new(PriorityRange::MAX)))
+        .priority(Priority::idle())
         .spawn();
 }
 
@@ -120,7 +116,7 @@ fn ap_init() {
 
     ThreadOptions::new(ap_idle_thread)
         .cpu_affinity(cpu_id.into())
-        .priority(Priority::new(PriorityRange::new(PriorityRange::MAX)))
+        .priority(Priority::idle())
         .spawn();
 }
 
