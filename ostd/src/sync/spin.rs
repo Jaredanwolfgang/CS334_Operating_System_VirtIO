@@ -11,10 +11,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::{
-    task::{disable_preempt, DisabledPreemptGuard},
-    trap::{disable_local, DisabledLocalIrqGuard},
-};
+use super::{guard::Guardian, LocalIrqDisabled, PreemptDisabled};
 
 /// A spin lock.
 ///
@@ -32,7 +29,7 @@ use crate::{
 ///
 /// [`disable_irq`]: Self::disable_irq
 #[repr(transparent)]
-pub struct SpinLock<T: ?Sized, G: Guardian = PreemptDisabled> {
+pub struct SpinLock<T: ?Sized, G = PreemptDisabled> {
     phantom: PhantomData<G>,
     /// Only the last field of a struct may have a dynamically sized type.
     /// That's why SpinLockInner is put in the last field.
@@ -44,55 +41,7 @@ struct SpinLockInner<T: ?Sized> {
     val: UnsafeCell<T>,
 }
 
-/// A guardian that denotes the guard behavior for holding the spin lock.
-pub trait Guardian {
-    /// The guard type.
-    type Guard: GuardTransfer;
-
-    /// Creates a new guard.
-    fn guard() -> Self::Guard;
-}
-
-/// The Guard can be transferred atomically.
-pub trait GuardTransfer {
-    /// Atomically transfers the current guard to a new instance.
-    ///
-    /// This function ensures that there are no 'gaps' between the destruction of the old guard and
-    /// the creation of the new guard, thereby maintaining the atomicity of guard transitions.
-    ///
-    /// The original guard must be dropped immediately after calling this method.
-    fn transfer_to(&mut self) -> Self;
-}
-
-/// A guardian that disables preemption while holding the spin lock.
-pub struct PreemptDisabled;
-
-impl Guardian for PreemptDisabled {
-    type Guard = DisabledPreemptGuard;
-
-    fn guard() -> Self::Guard {
-        disable_preempt()
-    }
-}
-
-/// A guardian that disables IRQs while holding the spin lock.
-///
-/// This guardian would incur a certain time overhead over
-/// [`PreemptDisabled']. So prefer avoiding using this guardian when
-/// IRQ handlers are allowed to get executed while holding the
-/// lock. For example, if a lock is never used in the interrupt
-/// context, then it is ok not to use this guardian in the process context.
-pub struct LocalIrqDisabled;
-
-impl Guardian for LocalIrqDisabled {
-    type Guard = DisabledLocalIrqGuard;
-
-    fn guard() -> Self::Guard {
-        disable_local()
-    }
-}
-
-impl<T, G: Guardian> SpinLock<T, G> {
+impl<T, G> SpinLock<T, G> {
     /// Creates a new spin lock.
     pub const fn new(val: T) -> Self {
         let lock_inner = SpinLockInner {
@@ -179,15 +128,15 @@ impl<T: ?Sized, G: Guardian> SpinLock<T, G> {
     }
 }
 
-impl<T: ?Sized + fmt::Debug, G: Guardian> fmt::Debug for SpinLock<T, G> {
+impl<T: ?Sized + fmt::Debug, G> fmt::Debug for SpinLock<T, G> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.inner.val, f)
     }
 }
 
 // SAFETY: Only a single lock holder is permitted to access the inner data of Spinlock.
-unsafe impl<T: ?Sized + Send, G: Guardian> Send for SpinLock<T, G> {}
-unsafe impl<T: ?Sized + Send, G: Guardian> Sync for SpinLock<T, G> {}
+unsafe impl<T: ?Sized + Send, G> Send for SpinLock<T, G> {}
+unsafe impl<T: ?Sized + Send, G> Sync for SpinLock<T, G> {}
 
 /// A guard that provides exclusive access to the data protected by a [`SpinLock`].
 pub type SpinLockGuard<'a, T, G> = SpinLockGuard_<T, &'a SpinLock<T, G>, G>;
