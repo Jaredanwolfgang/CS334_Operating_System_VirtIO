@@ -62,6 +62,6 @@ impl CryptoDevice {
 
 fn test_device(device: Arc<CryptoDevice>) {
     // 输出设备信息
-    early_println!("virtio_crypto_config = {:?}", device.config_manager.read_config());
+    early_println!("virtio_crypto_config = {:#?}", device.config_manager.read_config());
     // TODO: 需要补充测试代码
 }
