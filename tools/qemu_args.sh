@@ -130,6 +130,9 @@ if [ "$OVMF" = "on" ]; then
         QEMU_ARGS="${QEMU_ARGS} \
             -drive if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_PATH/OVMF_CODE.fd \
             -drive if=pflash,format=raw,unit=1,file=$OVMF_PATH/OVMF_VARS.fd \
+            -device virtio-rng \
+            -object cryptodev-backend-builtin,id=cryptodev0 \
+            -device virtio-crypto-pci,id=crypto0,cryptodev=cryptodev0 \
         "
     fi
 fi
