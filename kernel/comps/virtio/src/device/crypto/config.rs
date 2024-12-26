@@ -4,7 +4,6 @@ use ostd::Pod;
 use aster_util::safe_ptr::SafePtr;
 use crate::transport::{ConfigManager, VirtioTransport};
 
-
 bitflags::bitflags! {
     pub struct CryptoFeatures: u64{
         /// revision 1.
@@ -28,7 +27,6 @@ bitflags::bitflags! {
 
 #[derive(Debug, Pod, Clone, Copy)]
 // repr(c)使该结构体的内存布局与C兼容
-// 虽然暂时不知道有什么用，但还是抄过来了
 #[repr(C)]
 pub struct VirtioCryptoConfig {
     pub status: u32,

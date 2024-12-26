@@ -82,6 +82,9 @@ QEMU_ARGS="\
     -device virtio-net-pci,netdev=net01,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA \
     -device virtio-serial-pci,disable-legacy=on,disable-modern=off$IOMMU_DEV_EXTRA \
     -device virtconsole,chardev=mux \
+    -device virtio-rng \
+    -object cryptodev-backend-builtin,id=cryptodev0 \
+    -device virtio-crypto-pci,id=crypto0,cryptodev=cryptodev0 \
     $IOMMU_EXTRA_ARGS \
 "
 
@@ -130,9 +133,6 @@ if [ "$OVMF" = "on" ]; then
         QEMU_ARGS="${QEMU_ARGS} \
             -drive if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_PATH/OVMF_CODE.fd \
             -drive if=pflash,format=raw,unit=1,file=$OVMF_PATH/OVMF_VARS.fd \
-            -device virtio-rng \
-            -object cryptodev-backend-builtin,id=cryptodev0 \
-            -device virtio-crypto-pci,id=crypto0,cryptodev=cryptodev0 \
         "
     fi
 fi
