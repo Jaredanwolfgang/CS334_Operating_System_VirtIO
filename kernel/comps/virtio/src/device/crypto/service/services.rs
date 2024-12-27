@@ -3,13 +3,19 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
+pub const VIRTIO_CRYPTO_SERVICE_CIPHER:u32 = 0;
+pub const VIRTIO_CRYPTO_SERVICE_HASH:u32 = 1;
+pub const VIRTIO_CRYPTO_SERVICE_MAC:u32 = 2;
+pub const VIRTIO_CRYPTO_SERVICE_AEAD:u32 = 3;
+pub const VIRTIO_CRYPTO_SERVICE_AKCIPHER:u32 = 4; 
+
 bitflags! {
     pub struct SupportedCryptoServices: u32 {
-        const CIPHER                    = 1 << 0;  // 0x0001
-        const HASH                      = 1 << 1;  // 0x0002
-        const MAC                       = 1 << 2;  // 0x0004
-        const AEAD                      = 1 << 3;  // 0x0008
-        const AKCIPHER                  = 1 << 4;  // 0x0010
+        const CIPHER                    = 1 << VIRTIO_CRYPTO_SERVICE_CIPHER;
+        const HASH                      = 1 << VIRTIO_CRYPTO_SERVICE_HASH;
+        const MAC                       = 1 << VIRTIO_CRYPTO_SERVICE_MAC;
+        const AEAD                      = 1 << VIRTIO_CRYPTO_SERVICE_AEAD;
+        const AKCIPHER                  = 1 << VIRTIO_CRYPTO_SERVICE_AKCIPHER;
     }
 }
 

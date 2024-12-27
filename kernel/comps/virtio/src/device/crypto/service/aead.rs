@@ -3,12 +3,17 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
+const VIRTIO_CRYPTO_NO_AEAD: u32 = 0;
+const VIRTIO_CRYPTO_AEAD_GCM: u32 = 1;
+const VIRTIO_CRYPTO_AEAD_CCM: u32 = 2;
+const VIRTIO_CRYPTO_AEAD_CHACHA20_POLY1305: u32 = 3;
+
 bitflags! {
     pub struct SupportedAeads: u32 {
-        const NO_AEAD                      = 1 << 0;   // 0x0001
-        const GCM                          = 1 << 1;   // 0x0002
-        const CCM                          = 1 << 2;   // 0x0004
-        const CHACHA20_POLY1305            = 1 << 3;   // 0x0008
+        const NO_AEAD                      = 1 << VIRTIO_CRYPTO_NO_AEAD;                      // 0x0001
+        const GCM                          = 1 << VIRTIO_CRYPTO_AEAD_GCM;                      // 0x0002
+        const CCM                          = 1 << VIRTIO_CRYPTO_AEAD_CCM;                      // 0x0004
+        const CHACHA20_POLY1305            = 1 << VIRTIO_CRYPTO_AEAD_CHACHA20_POLY1305;        // 0x0008
     }
 }
 

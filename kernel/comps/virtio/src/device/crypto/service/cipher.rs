@@ -3,23 +3,39 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
+const VIRTIO_CRYPTO_NO_CIPHER: u32 = 0;
+const VIRTIO_CRYPTO_CIPHER_ARC4: u32 = 1;
+const VIRTIO_CRYPTO_CIPHER_AES_ECB: u32 = 2;
+const VIRTIO_CRYPTO_CIPHER_AES_CBC: u32 = 3;
+const VIRTIO_CRYPTO_CIPHER_AES_CTR: u32 = 4;
+const VIRTIO_CRYPTO_CIPHER_DES_ECB: u32 = 5;
+const VIRTIO_CRYPTO_CIPHER_DES_CBC: u32 = 6;
+const VIRTIO_CRYPTO_CIPHER_3DES_ECB: u32 = 7;
+const VIRTIO_CRYPTO_CIPHER_3DES_CBC: u32 = 8;
+const VIRTIO_CRYPTO_CIPHER_3DES_CTR: u32 = 9;
+const VIRTIO_CRYPTO_CIPHER_KASUMI_F8: u32 = 10;
+const VIRTIO_CRYPTO_CIPHER_SNOW3G_UEA2: u32 = 11;
+const VIRTIO_CRYPTO_CIPHER_AES_F8: u32 = 12;
+const VIRTIO_CRYPTO_CIPHER_AES_XTS: u32 = 13;
+const VIRTIO_CRYPTO_CIPHER_ZUC_EEA3: u32 = 14;
+
 bitflags! {
     pub struct SupportedCiphers: u64 {
-        const NO_CIPHER                 = 1 << 0;  // 0x0001
-        const ARC4                      = 1 << 1;  // 0x0002
-        const AES_ECB                   = 1 << 2;  // 0x0004
-        const AES_CBC                   = 1 << 3;  // 0x0008
-        const AES_CTR                   = 1 << 4;  // 0x0010
-        const DES_ECB                   = 1 << 5;  // 0x0020
-        const DES_CBC                   = 1 << 6;  // 0x0040
-        const THREE_DES_ECB             = 1 << 7;  // 0x0080
-        const THREE_DES_CBC             = 1 << 8;  // 0x0100
-        const THREE_DES_CTR             = 1 << 9;  // 0x0200
-        const KASUMI_F8                 = 1 << 10; // 0x0400
-        const SNOW3G_UEA2               = 1 << 11; // 0x0800
-        const AES_F8                    = 1 << 12; // 0x1000
-        const AES_XTS                   = 1 << 13; // 0x2000
-        const ZUC_EEA3                  = 1 << 14; // 0x4000
+        const NO_CIPHER                 = 1 << VIRTIO_CRYPTO_NO_CIPHER;
+        const ARC4                      = 1 << VIRTIO_CRYPTO_CIPHER_ARC4;
+        const AES_ECB                   = 1 << VIRTIO_CRYPTO_CIPHER_AES_ECB;
+        const AES_CBC                   = 1 << VIRTIO_CRYPTO_CIPHER_AES_CBC;
+        const AES_CTR                   = 1 << VIRTIO_CRYPTO_CIPHER_AES_CTR;
+        const DES_ECB                   = 1 << VIRTIO_CRYPTO_CIPHER_DES_ECB;
+        const DES_CBC                   = 1 << VIRTIO_CRYPTO_CIPHER_DES_CBC;
+        const THREE_DES_ECB             = 1 << VIRTIO_CRYPTO_CIPHER_3DES_ECB;
+        const THREE_DES_CBC             = 1 << VIRTIO_CRYPTO_CIPHER_3DES_CBC;
+        const THREE_DES_CTR             = 1 << VIRTIO_CRYPTO_CIPHER_3DES_CTR;
+        const KASUMI_F8                 = 1 << VIRTIO_CRYPTO_CIPHER_KASUMI_F8;
+        const SNOW3G_UEA2               = 1 << VIRTIO_CRYPTO_CIPHER_SNOW3G_UEA2;
+        const AES_F8                    = 1 << VIRTIO_CRYPTO_CIPHER_AES_F8;
+        const AES_XTS                   = 1 << VIRTIO_CRYPTO_CIPHER_AES_XTS;
+        const ZUC_EEA3                  = 1 << VIRTIO_CRYPTO_CIPHER_ZUC_EEA3;
     }
 }
 

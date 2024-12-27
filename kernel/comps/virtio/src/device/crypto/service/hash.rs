@@ -3,21 +3,35 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
+const VIRTIO_CRYPTO_NO_HASH: u32 = 0;
+const VIRTIO_CRYPTO_HASH_MD5: u32 = 1;
+const VIRTIO_CRYPTO_HASH_SHA1: u32 = 2;
+const VIRTIO_CRYPTO_HASH_SHA_224: u32 = 3;
+const VIRTIO_CRYPTO_HASH_SHA_256: u32 = 4;
+const VIRTIO_CRYPTO_HASH_SHA_384: u32 = 5;
+const VIRTIO_CRYPTO_HASH_SHA_512: u32 = 6;
+const VIRTIO_CRYPTO_HASH_SHA3_224: u32 = 7;
+const VIRTIO_CRYPTO_HASH_SHA3_256: u32 = 8;
+const VIRTIO_CRYPTO_HASH_SHA3_384: u32 = 9;
+const VIRTIO_CRYPTO_HASH_SHA3_512: u32 = 10;
+const VIRTIO_CRYPTO_HASH_SHA3_SHAKE128: u32 = 11;
+const VIRTIO_CRYPTO_HASH_SHA3_SHAKE256: u32 = 12;
+
 bitflags! {
     pub struct SupportedHashes: u32 {
-        const NO_HASH                       = 1 << 0;  // 0x0001
-        const MD5                           = 1 << 1;  // 0x0002
-        const SHA1                          = 1 << 2;  // 0x0004
-        const SHA_224                       = 1 << 3;  // 0x0008
-        const SHA_256                       = 1 << 4;  // 0x0010
-        const SHA_384                       = 1 << 5;  // 0x0020
-        const SHA_512                       = 1 << 6;  // 0x0040
-        const SHA3_224                      = 1 << 7;  // 0x0080
-        const SHA3_256                      = 1 << 8;  // 0x0100
-        const SHA3_384                      = 1 << 9;  // 0x0200
-        const SHA3_512                      = 1 << 10; // 0x0400
-        const SHA3_SHAKE128                 = 1 << 11; // 0x0800
-        const SHA3_SHAKE256                 = 1 << 12; // 0x1000
+        const NO_HASH                       = 1 << VIRTIO_CRYPTO_NO_HASH;                       // 0x0001
+        const MD5                           = 1 << VIRTIO_CRYPTO_HASH_MD5;                       // 0x0002
+        const SHA1                          = 1 << VIRTIO_CRYPTO_HASH_SHA1;                      // 0x0004
+        const SHA_224                       = 1 << VIRTIO_CRYPTO_HASH_SHA_224;                   // 0x0008
+        const SHA_256                       = 1 << VIRTIO_CRYPTO_HASH_SHA_256;                   // 0x0010
+        const SHA_384                       = 1 << VIRTIO_CRYPTO_HASH_SHA_384;                   // 0x0020
+        const SHA_512                       = 1 << VIRTIO_CRYPTO_HASH_SHA_512;                   // 0x0040
+        const SHA3_224                      = 1 << VIRTIO_CRYPTO_HASH_SHA3_224;                  // 0x0080
+        const SHA3_256                      = 1 << VIRTIO_CRYPTO_HASH_SHA3_256;                  // 0x0100
+        const SHA3_384                      = 1 << VIRTIO_CRYPTO_HASH_SHA3_384;                  // 0x0200
+        const SHA3_512                      = 1 << VIRTIO_CRYPTO_HASH_SHA3_512;                  // 0x0400
+        const SHA3_SHAKE128                 = 1 << VIRTIO_CRYPTO_HASH_SHA3_SHAKE128;             // 0x0800
+        const SHA3_SHAKE256                 = 1 << VIRTIO_CRYPTO_HASH_SHA3_SHAKE256;             // 0x1000
     }
 }
 

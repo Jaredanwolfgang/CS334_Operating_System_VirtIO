@@ -3,11 +3,15 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
+const VIRTIO_CRYPTO_NO_AKCIPHER: u32 = 0;
+const VIRTIO_CRYPTO_AKCIPHER_RSA: u32 = 1;
+const VIRTIO_CRYPTO_AKCIPHER_ECDSA: u32 = 2;
+
 bitflags! {
     pub struct SupportedAkCiphers: u32 {
-        const NO_AKCIPHER                  = 1 << 0;  // 0x0001
-        const RSA                          = 1 << 1;  // 0x0002
-        const ECDSA                        = 1 << 2;  // 0x0004
+        const NO_AKCIPHER                  = 1 << VIRTIO_CRYPTO_NO_AKCIPHER;                   // 0x0001
+        const RSA                          = 1 << VIRTIO_CRYPTO_AKCIPHER_RSA;                   // 0x0002
+        const ECDSA                        = 1 << VIRTIO_CRYPTO_AKCIPHER_ECDSA;                 // 0x0004
     }
 }
 

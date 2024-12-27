@@ -1,5 +1,5 @@
-use log::debug;
-use ostd::mm::{DmaStream, FrameAllocOptions, DmaDirection};
+// use log::debug;
+// use ostd::mm::{DmaStream, FrameAllocOptions, DmaDirection};
 use ostd::sync::SpinLock;
 use ostd::early_println;
 use alloc::sync::Arc;
@@ -57,31 +57,31 @@ impl CryptoDevice {
         // 创建数据队列 (dataq)
         let mut dataqs = Vec::with_capacity(config.max_dataqueues as usize);
         
-        // TODO: DATAQ_SIZE未知，暂且设置为1
-        const DATAQ_SIZE: u16 = 1;
+        // TODO: DATAQ_SIZE未知，暂且设置为2
+        const DATAQ_SIZE: u16 = 2;
 
         // 根据白皮书2.6节的定义，max_dataqueues的数据内容不应超过u16
-        let MAX_DATAQUEUES = config.max_dataqueues;
-        if MAX_DATAQUEUES > u16::MAX as u32 {
+        let max_dataqueues = config.max_dataqueues;
+        if max_dataqueues > u16::MAX as u32 {
             // max_dataqueues的数据范围不符合规范
             // TODO: 可能需要重启设备
             panic!("config.max_dataqueues out of bound.");
         }
 
-        for dataq_index in 0..MAX_DATAQUEUES {
+        for dataq_index in 0..max_dataqueues {
             // config.max_dataqueues为u32类型，但VirtQueue::new()中接收的idx数据为u16
             // 因此这里需要强行将u32转换成u16，此前代码已经保证max_dataqueues的数据范围不超过u16
             
-            let DATAQ_INDEX: u16 = dataq_index as u16;
-            let dataq = SpinLock::new(VirtQueue::new(DATAQ_INDEX, DATAQ_SIZE, transport.as_mut()).unwrap());
+            let dataq_index: u16 = dataq_index as u16;
+            let dataq = SpinLock::new(VirtQueue::new(dataq_index, DATAQ_SIZE, transport.as_mut()).unwrap());
             dataqs.push(dataq);
         }
 
         // TODO: CONTROLQ_SIZE未知，暂且设置为1
-        const CONTROLQ_SIZE: u16 = 1;
+        const CONTROLQ_SIZE: u16 = 2;
         // 同上，强行转换为u16
-        let CONTROLQ_INDEX: u16 = MAX_DATAQUEUES as u16;
-        let controlq = SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, CONTROLQ_SIZE, transport.as_mut()).unwrap());
+        let controlq_index: u16 = max_dataqueues as u16;
+        let controlq = SpinLock::new(VirtQueue::new(controlq_index, CONTROLQ_SIZE, transport.as_mut()).unwrap());
 
         // 创建设备实例
         let device = Arc::new(
@@ -179,3 +179,4 @@ fn test_device(device: Arc<CryptoDevice>) {
     }
 
 }
+
