@@ -9,7 +9,7 @@ use super::{
     rootfs::root_mount,
     utils::{AccessMode, CreationFlags, InodeMode, InodeType, StatusFlags, PATH_MAX, SYMLINKS_MAX},
 };
-use crate::prelude::*;
+use crate::{prelude::*, process::posix_thread::AsPosixThread};
 
 /// The file descriptor of the current working directory.
 pub const AT_FDCWD: FileDesc = -100;
@@ -134,9 +134,6 @@ impl FsResolver {
         let parent = lookup_ctx
             .parent()
             .ok_or_else(|| Error::with_message(Errno::ENOENT, "parent not found"))?;
-        if !parent.mode()?.is_writable() {
-            return_errno_with_message!(Errno::EACCES, "file cannot be created");
-        }
 
         let tail_file_name = lookup_ctx.tail_file_name().unwrap();
         let new_dentry =
@@ -285,7 +282,8 @@ impl FsResolver {
 
     /// Lookups the target dentry according to the given `fd`.
     pub fn lookup_from_fd(&self, fd: FileDesc) -> Result<Dentry> {
-        let current = current!();
+        let current = current_thread!();
+        let current = current.as_posix_thread().unwrap();
         let file_table = current.file_table().lock();
         let inode_handle = file_table
             .get_file(fd)?
