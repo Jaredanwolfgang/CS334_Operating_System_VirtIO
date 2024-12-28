@@ -1,0 +1,1 @@
+1. 查看其他设备（例如network）以得知如何传输struct（或者将struct转化为数组），并将多个struct拼在一起

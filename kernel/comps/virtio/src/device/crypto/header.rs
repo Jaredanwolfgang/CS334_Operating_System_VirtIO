@@ -5,9 +5,7 @@ use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AEAD,
     VIRTIO_CRYPTO_SERVICE_AKCIPHER,
 };
-
-
-
+// use core::mem;
 
 // Operation Status
 pub const VIRTIO_CRYPTO_OK: u32 = 0;
@@ -19,8 +17,6 @@ pub const VIRTIO_CRYPTO_NOSPC: u32 = 5;
 pub const VIRTIO_CRYPTO_KEY_REJECTED: u32 = 6;
 // TODO: 白皮书中存在VIRTIO_CRYPTO_MAX，但并未对其值和作用进行定义（见5.9.7.1）
 pub const VIRTIO_CRYPTO_MAX: u32 = 7;
-
-
 
 // Opcode Definition
 const fn VIRTIO_CRYPTO_OPCODE(service: u32, op: u32) -> u32 {
@@ -47,4 +43,16 @@ pub struct VirtioCryptoCtrlHeader {
     pub algo: u32,
     pub flag: u32,
     pub reserved: u32,
+}
+
+impl VirtioCryptoCtrlHeader {
+    // 将结构体转换为[u8; 16]字节数组
+    // pub fn to_byte_array(&self) -> [u8; 16] {
+        // 使用 unsafe 将结构体转换为字节数组
+        // unsafe {
+        //     // 将结构体的引用转换为字节数组的引用
+        //     let byte_array: [u8; 16] = mem::transmute_copy(self);
+        //     byte_array
+        // }
+    // }
 }

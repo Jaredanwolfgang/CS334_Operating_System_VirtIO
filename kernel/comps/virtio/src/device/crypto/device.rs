@@ -22,6 +22,7 @@ use crate::device::crypto::service::{
     aead::SupportedAeads,
     akcipher::SupportedAkCiphers,
 };
+use crate::device::crypto::header::VirtioCryptoCtrlHeader;
 
 pub struct CryptoDevice {
     pub config_manager: ConfigManager<VirtioCryptoConfig>,
@@ -177,6 +178,19 @@ fn test_device(device: Arc<CryptoDevice>) {
             early_println!("{}", akcipher_name);
         }
     }
+
+    // // 测试转换
+    // let header = VirtioCryptoCtrlHeader {
+    //     opcode: 1,
+    //     algo: 2,
+    //     flag: 3,
+    //     reserved: 0,
+    // };
+
+    // let byte_array = header.to_byte_array();
+
+    // // 打印字节数组
+    // early_println!("{:?}", byte_array);
 
 }
 
