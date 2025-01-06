@@ -7,7 +7,7 @@ use super::*;
 /// This is a singleton class, meaning that only one thread can be in this class at a time.
 /// This is used for the most critical tasks, such as powering off and rebooting.
 pub(super) struct StopClassRq {
-    thread: Option<Arc<Thread>>,
+    thread: Option<Arc<Task>>,
 }
 
 impl StopClassRq {
@@ -28,7 +28,7 @@ impl core::fmt::Debug for StopClassRq {
 }
 
 impl SchedClassRq for StopClassRq {
-    fn enqueue(&mut self, thread: Arc<Thread>, _: Option<EnqueueFlags>) {
+    fn enqueue(&mut self, thread: Arc<Task>, _: Option<EnqueueFlags>) {
         if self.thread.replace(thread).is_some() {
             panic!("Multiple `stop` threads spawned")
         }
@@ -42,7 +42,7 @@ impl SchedClassRq for StopClassRq {
         self.thread.is_none()
     }
 
-    fn pick_next(&mut self) -> Option<Arc<Thread>> {
+    fn pick_next(&mut self) -> Option<Arc<Task>> {
         self.thread.take()
     }
 
