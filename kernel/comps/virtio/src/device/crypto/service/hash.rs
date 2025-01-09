@@ -90,12 +90,3 @@ pub struct VirtioCryptoHashCreateSessionFlf {
     pub algo: u32,
     pub hash_result_len: u32,
 }
-
-// struct virtio_crypto_hash_create_session_flf {
-//     /* Device read only portion */
-//
-//     /* See VIRTIO_CRYPTO_HASH_* above */
-//     le32 algo;
-//     /* hash result length */
-//     le32 hash_result_len;
-// };

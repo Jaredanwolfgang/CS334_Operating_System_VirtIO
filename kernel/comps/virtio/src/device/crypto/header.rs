@@ -1,3 +1,5 @@
+use ostd::Pod;
+
 use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_CIPHER,
     VIRTIO_CRYPTO_SERVICE_HASH,
@@ -34,10 +36,20 @@ pub const VIRTIO_CRYPTO_AEAD_DESTROY_SESSION: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_
 pub const VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x04);
 pub const VIRTIO_CRYPTO_AKCIPHER_DESTROY_SESSION: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x05);
 
-
+pub const VIRTIO_CRYPTO_CIPHER_ENCRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_CIPHER, 0x00);
+pub const VIRTIO_CRYPTO_CIPHER_DECRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_CIPHER, 0x01);
+pub const VIRTIO_CRYPTO_HASH: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_HASH, 0x00);
+pub const VIRTIO_CRYPTO_MAC: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_MAC, 0x00);
+pub const VIRTIO_CRYPTO_AEAD_ENCRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x00);
+pub const VIRTIO_CRYPTO_AEAD_DECRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x01);
+pub const VIRTIO_CRYPTO_AKCIPHER_ENCRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x00);
+pub const VIRTIO_CRYPTO_AKCIPHER_DECRYPT: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x01);
+pub const VIRTIO_CRYPTO_AKCIPHER_SIGN: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x02);
+pub const VIRTIO_CRYPTO_AKCIPHER_VERIFY: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x03);
 
 // Header for Controlq
 #[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod)]
 pub struct VirtioCryptoCtrlHeader {
     pub opcode: u32,
     pub algo: u32,
@@ -45,14 +57,22 @@ pub struct VirtioCryptoCtrlHeader {
     pub reserved: u32,
 }
 
-impl VirtioCryptoCtrlHeader {
-    // 将结构体转换为[u8; 16]字节数组
-    // pub fn to_byte_array(&self) -> [u8; 16] {
-        // 使用 unsafe 将结构体转换为字节数组
-        // unsafe {
-        //     // 将结构体的引用转换为字节数组的引用
-        //     let byte_array: [u8; 16] = mem::transmute_copy(self);
-        //     byte_array
-        // }
-    // }
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod)]
+pub struct VirtioCryptoCreateSessionInput {
+    pub session_id: u64,
+    pub status: u32,
+    pub padding: u32,
 }
+
+// Header for Dataq
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod)]
+pub struct VirtioCryptoOpHeader {
+    pub algo: u32,
+    pub session_id: u64,
+    pub flag: u32,
+    pub padding: u32,
+}
+
+pub const VIRTIO_CRYPTO_FLAG_SESSION_MODE: u32 = 1;
