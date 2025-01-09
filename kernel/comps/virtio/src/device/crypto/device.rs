@@ -1,5 +1,5 @@
-// use log::debug;
-// use ostd::mm::{DmaStream, FrameAllocOptions, DmaDirection};
+use log::debug;
+use ostd::mm::{DmaStream, FrameAllocOptions, DmaDirection};
 use ostd::sync::SpinLock;
 use ostd::early_println;
 use alloc::sync::Arc;
@@ -15,6 +15,7 @@ use crate::VirtioTransport;
 use crate::device::VirtioDeviceError;
 use crate::transport::ConfigManager;
 use crate::device::crypto::service::{
+    services::CryptoServiceMap,
     services::SupportedCryptoServices,
     cipher::SupportedCiphers,
     hash::SupportedHashes,
@@ -22,18 +23,28 @@ use crate::device::crypto::service::{
     aead::SupportedAeads,
     akcipher::SupportedAkCiphers,
 };
-use crate::device::crypto::header::VirtioCryptoCtrlHeader;
+use crate::device::crypto::header::{
+    VirtioCryptoCtrlHeader,
+    VIRTIO_CRYPTO_HASH_CREATE_SESSION,
+};
+use crate::device::crypto::service::hash::{
+    VIRTIO_CRYPTO_HASH_SHA1,
+};
 
 pub struct CryptoDevice {
     pub config_manager: ConfigManager<VirtioCryptoConfig>,
+    pub request_buffer: DmaStream,
     pub dataqs: Vec<SpinLock<VirtQueue>>,
     pub controlq: SpinLock<VirtQueue>,
     pub transport: SpinLock<Box<dyn VirtioTransport>>,
+    pub supported_crypto_services: CryptoServiceMap,
 }
 
 impl CryptoDevice {
     pub fn negotiate_features(features: u64) -> u64 {
         // TODO: 根据设备要求进行功能选择
+
+        early_println!("negotiating features: {:#x}", features);
 
         let mut support_features = CryptoFeatures::from_bits_truncate(features);
 
@@ -44,7 +55,7 @@ impl CryptoDevice {
             support_features.remove(CryptoFeatures::VIRTIO_CRYPTO_F_AEAD_STATELESS_MODE);
             support_features.remove(CryptoFeatures::VIRTIO_CRYPTO_F_AKCIPHER_STATELESS_MODE);
         }
-        
+
         support_features.bits() as u64
     }
 
@@ -78,19 +89,26 @@ impl CryptoDevice {
             dataqs.push(dataq);
         }
 
-        // TODO: CONTROLQ_SIZE未知，暂且设置为1
+        // TODO: CONTROLQ_SIZE未知，暂且设置为2
         const CONTROLQ_SIZE: u16 = 2;
         // 同上，强行转换为u16
         let controlq_index: u16 = max_dataqueues as u16;
         let controlq = SpinLock::new(VirtQueue::new(controlq_index, CONTROLQ_SIZE, transport.as_mut()).unwrap());
 
+        let request_buffer = {
+            let vm_segment = FrameAllocOptions::new(1).alloc_contiguous().unwrap();
+            DmaStream::map(vm_segment, DmaDirection::Bidirectional, false).unwrap()
+        };
+
         // 创建设备实例
         let device = Arc::new(
             Self {
                 config_manager,
+                request_buffer,
                 dataqs,
                 controlq,
                 transport: SpinLock::new(transport),
+                supported_crypto_services: CryptoServiceMap::new(config),
             }
         );
         
@@ -102,95 +120,86 @@ impl CryptoDevice {
 
         Ok(())
     }
+
+    fn print_supported_crypto_algorithms(&self) {
+        early_println!("Supported Crypto Services and Algorithms:");
+
+        let supported_ciphers_name = self.supported_crypto_services.supported_ciphers.get_supported_ciphers_name();
+        if supported_ciphers_name.len() > 0 {
+            early_println!("- CIPHER");
+        }
+        for cipher_name in supported_ciphers_name {
+            early_println!("  - {}", cipher_name);
+        }
+    
+        let supported_hashes_name = self.supported_crypto_services.supported_hashes.get_supported_hashes_name();
+        if supported_hashes_name.len() > 0 {
+            early_println!("- HASH");
+        }
+        for hash_name in supported_hashes_name {
+            early_println!("  - {}", hash_name);
+        }
+    
+        let supported_macs_name = self.supported_crypto_services.supported_macs.get_supported_macs_name();
+        if supported_macs_name.len() > 0 {
+            early_println!("- MAC");
+        }
+        for mac_name in supported_macs_name {
+            early_println!("  - {}", mac_name);
+        }
+    
+        let supported_aeads_name = self.supported_crypto_services.supported_aeads.get_supported_aeads_name();
+        if supported_aeads_name.len() > 0 {
+            early_println!("- AEAD");
+        }
+        for aead_name in supported_aeads_name {
+            early_println!("  - {}", aead_name);
+        }
+    
+        let supported_akciphers_name = self.supported_crypto_services.supported_akciphers.get_supported_akciphers_name();
+        if supported_akciphers_name.len() > 0 {
+            early_println!("- AKCIPHER");
+        }
+        for akcipher_name in supported_akciphers_name {
+            early_println!("  - {}", akcipher_name);
+        }
+    }
+
 }
 
 fn test_device(device: Arc<CryptoDevice>) {
-    let config = device.config_manager.read_config();
+    
+    device.print_supported_crypto_algorithms();
 
-    // Crypto Services
-    let crypto_services_config = config.crypto_services;
-    let supported_crypto_services = SupportedCryptoServices::from_u32(crypto_services_config);
-    let supported_crypto_services_name = supported_crypto_services.get_supported_crypto_services_name();
 
-    early_println!("Supported Crypto Services:");
-    for crypto_service_name in supported_crypto_services_name {
-        early_println!("{}", crypto_service_name);
-    }
 
-    if supported_crypto_services.contains(SupportedCryptoServices::CIPHER) {
-        // Cipher
-        // 合并成一个64位值
-        let cipher_config = ((config.cipher_algo_h as u64) << 32) | config.cipher_algo_l as u64;
-        let supported_ciphers = SupportedCiphers::from_u64(cipher_config);
-        let supported_ciphers_name = supported_ciphers.get_supported_ciphers_name();
-
-        early_println!("Supported CIPHER Algorithms:");
-        for cipher_name in supported_ciphers_name {
-            early_println!("{}", cipher_name);
-        }
-    }
-
-    if supported_crypto_services.contains(SupportedCryptoServices::HASH) {
-        // Hash
-        let hash_config = config.hash_algo;
-        let supported_hashes = SupportedHashes::from_u32(hash_config);
-        let supported_hashes_name = supported_hashes.get_supported_hashes_name();
-
-        early_println!("Supported HASH Algorithms:");
-        for hash_name in supported_hashes_name {
-            early_println!("{}", hash_name);
-        }
-    }
-
-    if supported_crypto_services.contains(SupportedCryptoServices::MAC) {
-        // Mac
-        // 合并成一个64位值
-        let mac_config = ((config.mac_algo_h as u64) << 32) | config.mac_algo_l as u64;
-        let supported_macs = SupportedMacs::from_u64(mac_config);
-        let supported_macs_name = supported_macs.get_supported_macs_name();
-
-        early_println!("Supported MAC Algorithms:");
-        for mac_name in supported_macs_name {
-            early_println!("{}", mac_name);
-        }
-    }
-
-    if supported_crypto_services.contains(SupportedCryptoServices::AEAD) {
-        // AEAD
-        let aead_config = config.aead_algo;
-        let supported_aeads = SupportedAeads::from_u32(aead_config);
-        let supported_aeads_name = supported_aeads.get_supported_aeads_name();
-
-        early_println!("Supported AEAD Algorithms:");
-        for aead_name in supported_aeads_name {
-            early_println!("{}", aead_name);
-        }
-    }
-
-    if supported_crypto_services.contains(SupportedCryptoServices::AKCIPHER) {
-        // AKCIPHER
-        let akcipher_config = config.akcipher_algo;
-        let supported_akciphers = SupportedAkCiphers::from_u32(akcipher_config);
-        let supported_akciphers_name = supported_akciphers.get_supported_akciphers_name();
-
-        early_println!("Supported AKCIPHER Algorithms:");
-        for akcipher_name in supported_akciphers_name {
-            early_println!("{}", akcipher_name);
-        }
-    }
-
-    // // 测试转换
+    // 测试转换
     // let header = VirtioCryptoCtrlHeader {
-    //     opcode: 1,
-    //     algo: 2,
-    //     flag: 3,
+    //     opcode: VIRTIO_CRYPTO_HASH_CREATE_SESSION,
+    //     algo: VIRTIO_CRYPTO_HASH_SHA1,
+    //     // stateless mode may use flag
+    //     flag: 0,
     //     reserved: 0,
     // };
 
-    // let byte_array = header.to_byte_array();
+    // early_println!("opcode: {:x}", header.opcode);
+    // early_println!("algo: {:x}", header.algo);
 
-    // // 打印字节数组
-    // early_println!("{:?}", byte_array);
 
+
+    // // let mut request_queue = device.controlq.lock();
+    // let request_buffer = device.request_buffer.clone();
+    // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
+    // let mut writer = request_buffer.writer().unwrap();
+
+    // let mut len: usize = 0;
+    // writer.write_val(&header).unwrap();
+    // len += core::mem::size_of::<VirtioCryptoCtrlHeader>();
+
+    // request_buffer.sync(0..len).unwrap();
+    // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
+    // early_println!("After value:{:x}", value);
+
+    
 }
 

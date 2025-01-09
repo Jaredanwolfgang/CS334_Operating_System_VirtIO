@@ -3,19 +3,19 @@ use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 
-const VIRTIO_CRYPTO_NO_HASH: u32 = 0;
-const VIRTIO_CRYPTO_HASH_MD5: u32 = 1;
-const VIRTIO_CRYPTO_HASH_SHA1: u32 = 2;
-const VIRTIO_CRYPTO_HASH_SHA_224: u32 = 3;
-const VIRTIO_CRYPTO_HASH_SHA_256: u32 = 4;
-const VIRTIO_CRYPTO_HASH_SHA_384: u32 = 5;
-const VIRTIO_CRYPTO_HASH_SHA_512: u32 = 6;
-const VIRTIO_CRYPTO_HASH_SHA3_224: u32 = 7;
-const VIRTIO_CRYPTO_HASH_SHA3_256: u32 = 8;
-const VIRTIO_CRYPTO_HASH_SHA3_384: u32 = 9;
-const VIRTIO_CRYPTO_HASH_SHA3_512: u32 = 10;
-const VIRTIO_CRYPTO_HASH_SHA3_SHAKE128: u32 = 11;
-const VIRTIO_CRYPTO_HASH_SHA3_SHAKE256: u32 = 12;
+pub const VIRTIO_CRYPTO_NO_HASH: u32 = 0;
+pub const VIRTIO_CRYPTO_HASH_MD5: u32 = 1;
+pub const VIRTIO_CRYPTO_HASH_SHA1: u32 = 2;
+pub const VIRTIO_CRYPTO_HASH_SHA_224: u32 = 3;
+pub const VIRTIO_CRYPTO_HASH_SHA_256: u32 = 4;
+pub const VIRTIO_CRYPTO_HASH_SHA_384: u32 = 5;
+pub const VIRTIO_CRYPTO_HASH_SHA_512: u32 = 6;
+pub const VIRTIO_CRYPTO_HASH_SHA3_224: u32 = 7;
+pub const VIRTIO_CRYPTO_HASH_SHA3_256: u32 = 8;
+pub const VIRTIO_CRYPTO_HASH_SHA3_384: u32 = 9;
+pub const VIRTIO_CRYPTO_HASH_SHA3_512: u32 = 10;
+pub const VIRTIO_CRYPTO_HASH_SHA3_SHAKE128: u32 = 11;
+pub const VIRTIO_CRYPTO_HASH_SHA3_SHAKE256: u32 = 12;
 
 bitflags! {
     pub struct SupportedHashes: u32 {
@@ -84,3 +84,18 @@ impl SupportedHashes {
         supported_hashes_name
     }
 }
+
+
+pub struct VirtioCryptoHashCreateSessionFlf {
+    pub algo: u32,
+    pub hash_result_len: u32,
+}
+
+// struct virtio_crypto_hash_create_session_flf {
+//     /* Device read only portion */
+//
+//     /* See VIRTIO_CRYPTO_HASH_* above */
+//     le32 algo;
+//     /* hash result length */
+//     le32 hash_result_len;
+// };
