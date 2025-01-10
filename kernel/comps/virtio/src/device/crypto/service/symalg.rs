@@ -2,7 +2,7 @@ use bitflags::bitflags;
 use ostd::Pod;
 use alloc::vec::Vec;
 use alloc::vec;
-use crate::{alloc::string::ToString, device::crypto::header::ByteSlice};
+use crate::alloc::string::ToString;
 use alloc::string::String;
 
 // Symmetric Algorithms: Cipher
@@ -150,19 +150,6 @@ impl VirtioCryptoCipherCreateSessionFlf {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod)]
-pub struct VirtioCryptoCipherCreateSessionVlf<'a> {
-    pub cipher_key: ByteSlice<'a>,
-}
-
-impl<'a> VirtioCryptoCipherCreateSessionVlf<'a> {
-    pub fn new(cipher_key: &'a [u8]) -> Self {
-        Self {
-            cipher_key: ByteSlice::new(cipher_key),
-        }
-    }
-}
 
 // Symmetric Algorithms: The Chain algorithm
 pub const VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_HASH_THEN_CIPHER: u32 = 1;
@@ -196,22 +183,6 @@ impl VirtioCryptoChainAlgSessionFlf {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod)]
-pub struct VirtioCryptoChainAlgSessionVlf<'a> {
-    pub cipher_key: ByteSlice<'a>,
-    pub auth_key: ByteSlice<'a>,
-}
-
-impl<'a> VirtioCryptoChainAlgSessionVlf<'a> {
-    pub fn new(cipher_key: &'a [u8], auth_key: &'a [u8]) -> Self {
-        Self {
-            cipher_key: ByteSlice::new(cipher_key),
-            auth_key: ByteSlice::new(auth_key),
-        }
-    }
-}
-
 // Symmetric Algorithms
 pub const VIRTIO_CRYPTO_SYM_OP_NONE: u32 = 0;
 pub const VIRTIO_CRYPTO_SYM_OP_CIPHER: u32 = 1;
@@ -236,20 +207,6 @@ impl VirtioCryptoSymCreateSessionFlf {
             op_flf: flf,
             op_type,
             padding: 0,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod)]
-pub struct VirtioCryptoSymCreateSessionVlf<'a> {
-    pub op_vlf: ByteSlice<'a>,
-}
-
-impl<'a> VirtioCryptoSymCreateSessionVlf<'a> {
-    pub fn new(op_vlf: &'a [u8]) -> Self {
-        Self {
-            op_vlf: ByteSlice::new(&op_vlf),
         }
     }
 }

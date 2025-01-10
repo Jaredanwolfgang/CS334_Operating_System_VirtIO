@@ -7,6 +7,8 @@ use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AEAD,
     VIRTIO_CRYPTO_SERVICE_AKCIPHER,
 };
+
+use super::service::symalg::VirtioCryptoSymCreateSessionFlf;
 // use core::mem;
 
 // Operation Status
@@ -62,10 +64,9 @@ pub struct VirtioCryptoCtrlHeader {
 pub const VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY: u32 = 56;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
-pub struct VirtioCryptoOpCtrlReq<'a> {
+pub struct VirtioCryptoOpCtrlReqPartial {
     pub header: VirtioCryptoCtrlHeader,
-    pub op_flf: ByteSlice<'a>,
-    pub op_vlf: ByteSlice<'a>,
+    pub op_flf: VirtioCryptoSymCreateSessionFlf,
 }
 
 #[repr(C)]
@@ -107,41 +108,4 @@ pub struct VirtioCryptoOpHeader {
     pub session_id: u64,
     pub flag: u32,
     pub padding: u32,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
-pub struct ByteSlice<'a>(&'a [u8]);
-impl<'a> ByteSlice<'a> {
-    pub fn new(slice: &'a [u8]) -> Self {
-        ByteSlice(slice)
-    }
-}
-unsafe impl<'a> Pod for ByteSlice<'a> {
-    fn new_zeroed() -> Self {
-        ByteSlice(&[])
-    }
-
-    fn new_uninit() -> Self {
-        ByteSlice(&[])
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Self {
-        let mut new_self = ByteSlice::new(&[]);
-        let copy_len = new_self.as_bytes().len();
-        new_self.as_bytes_mut().copy_from_slice(&bytes[..copy_len]);
-        new_self
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        let ptr_to_inner = self.0.as_ptr() as *const u8;
-        let len = self.0.len();
-        unsafe { core::slice::from_raw_parts(ptr_to_inner, len) }
-    }
-
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
-        let ptr_to_inner = self.0.as_ptr() as *mut u8;
-        let len = self.0.len(); 
-        unsafe { core::slice::from_raw_parts_mut(ptr_to_inner, len) }
-    }
 }

@@ -1,6 +1,7 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{hint::spin_loop, mem::size_of};
 use log::debug;
+use alloc::vec;
 use ostd::{
     early_println,
     mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
@@ -89,7 +90,7 @@ impl CryptoDevice {
         }
 
         // TODO: CONTROLQ_SIZE未知，暂且设置为2
-        const CONTROLQ_SIZE: u16 = 2;
+        const CONTROLQ_SIZE: u16 = 64;
         // 同上，强行转换为u16
         let controlq_index: u16 = max_dataqueues as u16;
         let controlq = SpinLock::new(
@@ -197,38 +198,40 @@ impl CryptoDevice {
                 flag: 0,
                 reserved: 0,
             };
-            let data = [0, 1, 2, 3, 4];
-            let bytes_data = ByteSlice::new(&data);
-            early_println!("data: {:?}", data);
-            early_println!("bytes_data: {:?}", bytes_data);
-            early_println!("bytes_data as bytes {:?}", bytes_data.as_bytes()); 
-
             let flf = VirtioCryptoCipherCreateSessionFlf::new(
                 VIRTIO_CRYPTO_CIPHER_AES_CBC,
                 VIRTIO_CRYPTO_OP_ENCRYPT
             );
-            let vlf = VirtioCryptoCipherCreateSessionVlf::new(&[0, 1, 2, 3, 4]);
-            early_println!("flf: {:?}", flf);
-            early_println!("vlf: {:?}", vlf);
             let sym_create_flf = VirtioCryptoSymCreateSessionFlf::new(
                 flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
             );
-            early_println!("sym_create_flf: {:?}", sym_create_flf);
-            let sym_create_vlf = VirtioCryptoSymCreateSessionVlf::new(
-                vlf.as_bytes()
-            );
-            early_println!("sym_create_vlf: {:?}", sym_create_vlf);
-            let crypto_req = VirtioCryptoOpCtrlReq {
+            let crypto_req = VirtioCryptoOpCtrlReqPartial {
                 header,
-                op_flf: ByteSlice::new(sym_create_flf.as_bytes()),
-                op_vlf: ByteSlice::new(sym_create_vlf.as_bytes()),
+                op_flf: sym_create_flf,
             };
-            early_println!("crypto_req: {:?}", crypto_req);
             req_slice
                 .write_val(0, &crypto_req).unwrap();
             req_slice.sync().unwrap();
             req_slice
         };
+        let variable_length_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+        };
+
+        let vlf_slice = {
+            let cipher_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] as [u8; 16];
+            let cipher_data_len = cipher_data.len();
+            let vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+            vlf_slice.write_bytes(0, &cipher_data).unwrap();
+            vlf_slice.sync().unwrap();
+            vlf_slice
+        };
+
+        let inputs_slice = vec![&req_slice, &vlf_slice];
     
         let resp_slice = {
             let resp_slice = DmaStreamSlice::new(&self.response_buffer, id * RESP_SIZE, RESP_SIZE);
@@ -241,13 +244,18 @@ impl CryptoDevice {
         let mut queue = self.controlq.disable_irq().lock();
     
         let token = queue
-            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .add_dma_buf(inputs_slice.as_slice(), &[&resp_slice])
             .expect("add queue failed");
         
         if queue.should_notify() {
             queue.notify();
         }
-    
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+        
         resp_slice.sync().unwrap();
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
@@ -267,7 +275,7 @@ impl CryptoDevice {
     }
 }
 
-const REQ_SIZE: usize = size_of::<VirtioCryptoOpCtrlReq>();
+const REQ_SIZE: usize = size_of::<VirtioCryptoOpCtrlReqPartial>();
 const RESP_SIZE: usize = size_of::<VirtioCryptoCreateSessionInput>();
 
 fn slice_to_padded_array(slice: &[u8]) -> [u8; 56] {
