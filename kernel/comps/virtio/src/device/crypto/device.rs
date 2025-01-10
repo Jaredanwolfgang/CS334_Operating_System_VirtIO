@@ -16,8 +16,8 @@ use crate::{
             service::{
                 aead::SupportedAeads,
                 akcipher::SupportedAkCiphers,
-                cipher::SupportedCiphers,
-                hash::{SupportedHashes, VIRTIO_CRYPTO_HASH_SHA1, VirtioCryptoHashCreateSessionFlf},
+                symalg::*,
+                hash::*,
                 mac::SupportedMacs,
                 services::{CryptoServiceMap, SupportedCryptoServices},
             },
@@ -192,17 +192,40 @@ impl CryptoDevice {
         let req_slice = {
             let req_slice = DmaStreamSlice::new(&self.request_buffer, id * REQ_SIZE, REQ_SIZE);
             let header = VirtioCryptoCtrlHeader {
-                opcode: VIRTIO_CRYPTO_HASH_CREATE_SESSION,
-                algo: VIRTIO_CRYPTO_HASH_SHA1,
+                opcode: VIRTIO_CRYPTO_CIPHER_CREATE_SESSION,
+                algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
                 flag: 0,
                 reserved: 0,
             };
-            let req = VirtioCryptoOpCtrlReq {
+            let data = [0, 1, 2, 3, 4];
+            let bytes_data = ByteSlice::new(&data);
+            early_println!("data: {:?}", data);
+            early_println!("bytes_data: {:?}", bytes_data);
+            early_println!("bytes_data as bytes {:?}", bytes_data.as_bytes()); 
+
+            let flf = VirtioCryptoCipherCreateSessionFlf::new(
+                VIRTIO_CRYPTO_CIPHER_AES_CBC,
+                VIRTIO_CRYPTO_OP_ENCRYPT
+            );
+            let vlf = VirtioCryptoCipherCreateSessionVlf::new(&[0, 1, 2, 3, 4]);
+            early_println!("flf: {:?}", flf);
+            early_println!("vlf: {:?}", vlf);
+            let sym_create_flf = VirtioCryptoSymCreateSessionFlf::new(
+                flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
+            );
+            early_println!("sym_create_flf: {:?}", sym_create_flf);
+            let sym_create_vlf = VirtioCryptoSymCreateSessionVlf::new(
+                vlf.as_bytes()
+            );
+            early_println!("sym_create_vlf: {:?}", sym_create_vlf);
+            let crypto_req = VirtioCryptoOpCtrlReq {
                 header,
-                op_flf: slice_to_padded_array(VirtioCryptoHashCreateSessionFlf::new(VIRTIO_CRYPTO_HASH_SHA1).as_bytes()),
+                op_flf: ByteSlice::new(sym_create_flf.as_bytes()),
+                op_vlf: ByteSlice::new(sym_create_vlf.as_bytes()),
             };
+            early_println!("crypto_req: {:?}", crypto_req);
             req_slice
-                .write_val(0, &req).unwrap();
+                .write_val(0, &crypto_req).unwrap();
             req_slice.sync().unwrap();
             req_slice
         };

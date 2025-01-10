@@ -4,7 +4,7 @@ use crate::alloc::string::ToString;
 use alloc::string::String;
 use crate::device::crypto::config::VirtioCryptoConfig;
 use crate::device::crypto::service::{
-    cipher::SupportedCiphers,
+    symalg::SupportedCiphers,
     hash::SupportedHashes,
     mac::SupportedMacs,
     aead::SupportedAeads,
