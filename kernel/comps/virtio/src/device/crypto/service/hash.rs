@@ -90,3 +90,4 @@ pub struct VirtioCryptoHashCreateSessionFlf {
     pub algo: u32,
     pub hash_result_len: u32,
 }
+

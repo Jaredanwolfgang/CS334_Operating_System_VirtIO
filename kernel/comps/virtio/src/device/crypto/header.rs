@@ -19,6 +19,8 @@ pub const VIRTIO_CRYPTO_NOSPC: u32 = 5;
 pub const VIRTIO_CRYPTO_KEY_REJECTED: u32 = 6;
 // TODO: 白皮书中存在VIRTIO_CRYPTO_MAX，但并未对其值和作用进行定义（见5.9.7.1）
 pub const VIRTIO_CRYPTO_MAX: u32 = 7;
+// 自定义NOT_READY，用于初始化resp_slice
+pub const _VIRTIO_CRYPTO_NOTREADY: u32 = 8;
 
 // Opcode Definition
 const fn VIRTIO_CRYPTO_OPCODE(service: u32, op: u32) -> u32 {
@@ -49,7 +51,7 @@ pub const VIRTIO_CRYPTO_AKCIPHER_VERIFY: u32 = VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPT
 
 // Header for Controlq
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod)]
+#[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoCtrlHeader {
     pub opcode: u32,
     pub algo: u32,
@@ -58,21 +60,42 @@ pub struct VirtioCryptoCtrlHeader {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod)]
+#[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoCreateSessionInput {
     pub session_id: u64,
     pub status: u32,
     pub padding: u32,
 }
 
-// Header for Dataq
+impl VirtioCryptoCreateSessionInput {
+    pub fn default() -> Self {
+        Self {
+            session_id: 0,
+            status: _VIRTIO_CRYPTO_NOTREADY,
+            padding: 0,
+        }
+    }
+}
+
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct VirtioCryptoDestroySessionFlf {
+    pub session_id: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct VirtioCryptoDestroySessionInput {
+    pub status: u8,
+}
+
+// Header for Dataq
+pub const VIRTIO_CRYPTO_FLAG_SESSION_MODE: u32 = 1;
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoOpHeader {
     pub algo: u32,
     pub session_id: u64,
     pub flag: u32,
     pub padding: u32,
 }
-
-pub const VIRTIO_CRYPTO_FLAG_SESSION_MODE: u32 = 1;
