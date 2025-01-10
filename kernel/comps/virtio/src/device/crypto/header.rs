@@ -8,7 +8,7 @@ use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AKCIPHER,
 };
 
-use super::service::symalg::VirtioCryptoSymCreateSessionFlf;
+use super::service::symalg::{VirtioCryptoSymCreateSessionFlf, VirtioCryptoSymDataFlf};
 // use core::mem;
 
 // Operation Status
@@ -170,4 +170,22 @@ pub const VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY: u32 = 48;
 pub struct VirtioCryptoOpDataReq {
     pub header: VirtioCryptoOpHeader,
     pub op_flf: [u8; VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY as usize],
+}
+
+impl VirtioCryptoOpDataReq {
+    pub fn new(header: VirtioCryptoOpHeader, op_flf: VirtioCryptoSymDataFlf) -> Self {
+        let mut op_flf_bytes = [0; VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY as usize];
+        let op_flf_bytes_slice = op_flf.as_bytes();
+        op_flf_bytes[..op_flf_bytes_slice.len()].copy_from_slice(&op_flf_bytes_slice);
+        Self {
+            header,
+            op_flf: op_flf_bytes,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Default)]
+pub struct VirtioCryptoInhdr {
+    pub status: u8
 }
