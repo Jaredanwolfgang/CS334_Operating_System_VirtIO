@@ -46,9 +46,6 @@ impl EntropyDevice {
     
         // Finish init
         device.transport.lock().finish_init();
-    
-        // Test device
-        test_device(device);
         Ok(())
     }
 }

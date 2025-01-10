@@ -1,26 +1,23 @@
 use alloc::{sync::Arc, vec::Vec};
-use core::mem::size_of;
-
+use core::{hint::spin_loop, mem::size_of};
 use log::debug;
 use ostd::{
     early_println,
     mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
     sync::SpinLock,
+    Pod,
+    mm::VmIo
 };
-
 use super::config::{CryptoFeatures, VirtioCryptoConfig};
 use crate::{
     device::{
         crypto::{
-            header::{
-                VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader,
-                VIRTIO_CRYPTO_HASH_CREATE_SESSION,
-            },
+            header::*,
             service::{
                 aead::SupportedAeads,
                 akcipher::SupportedAkCiphers,
                 cipher::SupportedCiphers,
-                hash::{SupportedHashes, VIRTIO_CRYPTO_HASH_SHA1},
+                hash::{SupportedHashes, VIRTIO_CRYPTO_HASH_SHA1, VirtioCryptoHashCreateSessionFlf},
                 mac::SupportedMacs,
                 services::{CryptoServiceMap, SupportedCryptoServices},
             },
@@ -124,7 +121,7 @@ impl CryptoDevice {
         device.transport.lock().finish_init();
 
         // 测试设备
-        test_device(device);
+        device.test_device();
 
         Ok(())
     }
@@ -187,65 +184,72 @@ impl CryptoDevice {
             early_println!("  - {}", akcipher_name);
         }
     }
+
+    fn test_device(&self) {
+        self.print_supported_crypto_algorithms();
+    
+        let id = 0;
+        let req_slice = {
+            let req_slice = DmaStreamSlice::new(&self.request_buffer, id * REQ_SIZE, REQ_SIZE);
+            let header = VirtioCryptoCtrlHeader {
+                opcode: VIRTIO_CRYPTO_HASH_CREATE_SESSION,
+                algo: VIRTIO_CRYPTO_HASH_SHA1,
+                flag: 0,
+                reserved: 0,
+            };
+            let req = VirtioCryptoOpCtrlReq {
+                header,
+                op_flf: slice_to_padded_array(VirtioCryptoHashCreateSessionFlf::new(VIRTIO_CRYPTO_HASH_SHA1).as_bytes()),
+            };
+            req_slice
+                .write_val(0, &req).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+    
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(&self.response_buffer, id * RESP_SIZE, RESP_SIZE);
+            resp_slice
+                .write_val(0, &VirtioCryptoCreateSessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+    
+        let mut queue = self.controlq.disable_irq().lock();
+    
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+        
+        if queue.should_notify() {
+            queue.notify();
+        }
+    
+        resp_slice.sync().unwrap();
+        let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
+        early_println!("Status: {:?}", resp);
+    
+        // // let mut request_queue = device.controlq.lock();
+        // let request_buffer = device.request_buffer.clone();
+        // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
+        // let mut writer = request_buffer.writer().unwrap();
+    
+        // let mut len: usize = 0;
+        // writer.write_val(&header).unwrap();
+        // len += core::mem::size_of::<VirtioCryptoCtrlHeader>();
+    
+        // request_buffer.sync(0..len).unwrap();
+        // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
+        // early_println!("After value:{:x}", value);
+    }
 }
 
-fn test_device(device: Arc<CryptoDevice>) {
-    device.print_supported_crypto_algorithms();
-    let req_buffer = &device.request_buffer;
+const REQ_SIZE: usize = size_of::<VirtioCryptoOpCtrlReq>();
+const RESP_SIZE: usize = size_of::<VirtioCryptoCreateSessionInput>();
 
-    // 测试HASH
-
-    const REQ_SIZE: usize = size_of::<VirtioCryptoCtrlHeader>();
-
-    let id = 0;
-    let req_slice = {
-        let req_slice = DmaStreamSlice::new(req_buffer, id * REQ_SIZE, REQ_SIZE);
-        let header = VirtioCryptoCtrlHeader {
-            opcode: VIRTIO_CRYPTO_HASH_CREATE_SESSION,
-            algo: VIRTIO_CRYPTO_HASH_SHA1,
-            // stateless mode may use flag
-            flag: 0,
-            reserved: 0,
-        };
-        req_slice
-            .write_val(0, &header).unwarp();
-        req_slice.sync().unwrap();
-        req_slice
-    };
-
-    const RESP_SIZE: usize = size_of::<VirtioCryptoCreateSessionInput>();
-
-    let resp_slice = {
-        let resp_slice = DmaStreamSlice::new(&device.response_buffer, id * RESP_SIZE, RESP_SIZE);
-        resp_slice
-            .write_val(0, &VirtioCryptoCreateSessionInput::default())
-            .unwrap();
-        resp_slice
-    };
-
-    let queue = device.controlq.disable_irq().lock();
-
-    let token = queue
-        .add_dma_buf(&[&req_slice], &[&resp_slice])
-        .expect("add queue failed");
-    if queue.should_notify() {
-        queue.notify();
-    }
-
-    resp_slice.sync().unwrap();
-    let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwarp();
-    early_println!("Status: {}", resp);
-
-    // // let mut request_queue = device.controlq.lock();
-    // let request_buffer = device.request_buffer.clone();
-    // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
-    // let mut writer = request_buffer.writer().unwrap();
-
-    // let mut len: usize = 0;
-    // writer.write_val(&header).unwrap();
-    // len += core::mem::size_of::<VirtioCryptoCtrlHeader>();
-
-    // request_buffer.sync(0..len).unwrap();
-    // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
-    // early_println!("After value:{:x}", value);
+fn slice_to_padded_array(slice: &[u8]) -> [u8; 56] {
+    let mut array = [0u8; 56]; // Initialize with zeroes
+    let len = slice.len().min(56); // Ensure we don't exceed 56
+    array[..len].copy_from_slice(&slice[..len]); // Copy the slice into the array
+    array
 }
