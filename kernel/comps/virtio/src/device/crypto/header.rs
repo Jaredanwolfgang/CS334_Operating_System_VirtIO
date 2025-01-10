@@ -66,7 +66,19 @@ pub const VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY: u32 = 56;
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoOpCtrlReqPartial {
     pub header: VirtioCryptoCtrlHeader,
-    pub op_flf: VirtioCryptoSymCreateSessionFlf,
+    pub op_flf: [u8; VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY as usize],
+}
+
+impl VirtioCryptoOpCtrlReqPartial {
+    pub fn new(header: VirtioCryptoCtrlHeader, op_flf: VirtioCryptoSymCreateSessionFlf) -> Self {
+        let mut op_flf_bytes = [0; VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY as usize];
+        let op_flf_bytes_slice = op_flf.as_bytes();
+        op_flf_bytes[..op_flf_bytes_slice.len()].copy_from_slice(&op_flf_bytes_slice);
+        Self {
+            header,
+            op_flf: op_flf_bytes,
+        }
+    }
 }
 
 #[repr(C)]
@@ -100,12 +112,62 @@ pub struct VirtioCryptoDestroySessionInput {
 }
 
 // Header for Dataq
+/* 
+struct virtio_crypto_op_header { 
+#define VIRTIO_CRYPTO_CIPHER_ENCRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_CIPHER, 0x00) 
+#define VIRTIO_CRYPTO_CIPHER_DECRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_CIPHER, 0x01) 
+#define VIRTIO_CRYPTO_HASH VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_HASH, 0x00) 
+#define VIRTIO_CRYPTO_MAC VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_MAC, 0x00) 
+#define VIRTIO_CRYPTO_AEAD_ENCRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x00) 
+#define VIRTIO_CRYPTO_AEAD_DECRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AEAD, 0x01) 
+#define VIRTIO_CRYPTO_AKCIPHER_ENCRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x00) 
+#define VIRTIO_CRYPTO_AKCIPHER_DECRYPT VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x01) 
+#define VIRTIO_CRYPTO_AKCIPHER_SIGN VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x02) 
+#define VIRTIO_CRYPTO_AKCIPHER_VERIFY VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x03) 
+    le32 opcode; 
+    /* algo should be service-specific algorithms */ 
+    le32 algo; 
+    le64 session_id; 
+#define VIRTIO_CRYPTO_FLAG_SESSION_MODE 1 
+    /* control flag to control the request */ 
+    le32 flag; 
+    le32 padding; 
+};
+*/
 pub const VIRTIO_CRYPTO_FLAG_SESSION_MODE: u32 = 1;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoOpHeader {
+    pub opcode: u32,
     pub algo: u32,
     pub session_id: u64,
     pub flag: u32,
     pub padding: u32,
+}
+
+
+/*
+struct virtio_crypto_op_data_req { 
+    /* Device read only portion */ 
+ 
+    struct virtio_crypto_op_header header; 
+ 
+#define VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY 48 
+    /* fixed length fields, opcode specific */ 
+    u8 op_flf[flf_len]; 
+ 
+    /* Device read && write portion */ 
+    /* variable length fields, opcode specific */ 
+    u8 op_vlf[vlf_len]; 
+ 
+    /* Device write only portion */ 
+    struct virtio_crypto_inhdr inhdr; 
+};
+*/
+pub const VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY: u32 = 48;
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct VirtioCryptoOpDataReq {
+    pub header: VirtioCryptoOpHeader,
+    pub op_flf: [u8; VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY as usize],
 }

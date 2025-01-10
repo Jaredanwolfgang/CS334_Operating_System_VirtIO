@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use ostd::Pod;
 use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use alloc::string::String;
@@ -102,5 +103,44 @@ impl SupportedMacs {
             supported_macs_name.push("ZUC EIA3".to_string());
         }
         supported_macs_name
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct VirtioCryptoMacCreateSessionFlf {
+    pub algo: u32,
+    pub hash_result_len: u32,
+    pub auth_key_len: u32,
+    pub padding: u32,
+}
+
+impl VirtioCryptoMacCreateSessionFlf {
+    pub fn new(algo: u32) -> Self {
+        let (hash_result_len, auth_key_len) = match algo {
+            VIRTIO_CRYPTO_MAC_HMAC_MD5 => (16, 16),
+            VIRTIO_CRYPTO_MAC_HMAC_SHA1 => (20, 20),
+            VIRTIO_CRYPTO_MAC_HMAC_SHA_224 => (28, 28),
+            VIRTIO_CRYPTO_MAC_HMAC_SHA_256 => (32, 32),
+            VIRTIO_CRYPTO_MAC_HMAC_SHA_384 => (48, 48),
+            VIRTIO_CRYPTO_MAC_HMAC_SHA_512 => (64, 64),
+            VIRTIO_CRYPTO_MAC_CMAC_3DES => (16, 16),
+            VIRTIO_CRYPTO_MAC_CMAC_AES => (16, 16),
+            VIRTIO_CRYPTO_MAC_KASUMI_F9 => (4, 16),
+            VIRTIO_CRYPTO_MAC_SNOW3G_UIA2 => (4, 16),
+            VIRTIO_CRYPTO_MAC_GMAC_AES => (16, 16),
+            VIRTIO_CRYPTO_MAC_GMAC_TWOFISH => (16, 16),
+            VIRTIO_CRYPTO_MAC_CBCMAC_AES => (16, 16),
+            VIRTIO_CRYPTO_MAC_CBCMAC_KASUMI_F9 => (4, 16),
+            VIRTIO_CRYPTO_MAC_XCBC_AES => (16, 16),
+            VIRTIO_CRYPTO_MAC_ZUC_EIA3 => (4, 16),
+            _ => (0, 0),
+        };
+        Self {
+            algo,
+            hash_result_len,
+            auth_key_len,
+            padding: 0,
+        }
     }
 }

@@ -82,7 +82,6 @@ impl CryptoDevice {
         for dataq_index in 0..max_dataqueues {
             // config.max_dataqueues为u32类型，但VirtQueue::new()中接收的idx数据为u16
             // 因此这里需要强行将u32转换成u16，此前代码已经保证max_dataqueues的数据范围不超过u16
-
             let dataq_index: u16 = dataq_index as u16;
             let dataq =
                 SpinLock::new(VirtQueue::new(dataq_index, DATAQ_SIZE, transport.as_mut()).unwrap());
@@ -198,6 +197,7 @@ impl CryptoDevice {
                 flag: 0,
                 reserved: 0,
             };
+            // TODO: Move these logics to the header file.
             let flf = VirtioCryptoCipherCreateSessionFlf::new(
                 VIRTIO_CRYPTO_CIPHER_AES_CBC,
                 VIRTIO_CRYPTO_OP_ENCRYPT
@@ -205,10 +205,9 @@ impl CryptoDevice {
             let sym_create_flf = VirtioCryptoSymCreateSessionFlf::new(
                 flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
             );
-            let crypto_req = VirtioCryptoOpCtrlReqPartial {
-                header,
-                op_flf: sym_create_flf,
-            };
+            let crypto_req = VirtioCryptoOpCtrlReqPartial::new(
+                header, sym_create_flf
+            );
             req_slice
                 .write_val(0, &crypto_req).unwrap();
             req_slice.sync().unwrap();
@@ -259,19 +258,6 @@ impl CryptoDevice {
         resp_slice.sync().unwrap();
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
-    
-        // // let mut request_queue = device.controlq.lock();
-        // let request_buffer = device.request_buffer.clone();
-        // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
-        // let mut writer = request_buffer.writer().unwrap();
-    
-        // let mut len: usize = 0;
-        // writer.write_val(&header).unwrap();
-        // len += core::mem::size_of::<VirtioCryptoCtrlHeader>();
-    
-        // request_buffer.sync(0..len).unwrap();
-        // let value = request_buffer.reader().unwrap().read_once::<u64>().unwrap();
-        // early_println!("After value:{:x}", value);
     }
 }
 
