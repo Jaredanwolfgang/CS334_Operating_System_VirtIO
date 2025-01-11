@@ -10,7 +10,7 @@ use ostd::{
     Pod,
     mm::VmIo
 };
-use super::config::{CryptoFeatures, VirtioCryptoConfig};
+use super::{config::{CryptoFeatures, VirtioCryptoConfig}, service::services::VIRTIO_CRYPTO_SERVICE_CIPHER};
 use crate::{
     device::{
         crypto::{
@@ -18,7 +18,7 @@ use crate::{
             service::{
                 aead::SupportedAeads,
                 akcipher::SupportedAkCiphers,
-                symalg::*,
+                sym::*,
                 hash::*,
                 mac::SupportedMacs,
                 services::{CryptoServiceMap, SupportedCryptoServices},
@@ -124,8 +124,15 @@ impl CryptoDevice {
         device.transport.lock().finish_init();
 
         // 测试设备
-        let id = device.init_controlq();
-        device.init_dataq(id);
+
+        let session_id = Cipher::create_session(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] as [u8; 16]));
+
+        let iv = vec![0x00; 16];
+        let src_data = vec![
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+        ];
+        let encrypte_result = Cipher::encrypte(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, session_id, iv.clone(), src_data, 32);
 
         Ok(())
     }
@@ -189,179 +196,179 @@ impl CryptoDevice {
         }
     }
 
-    fn init_controlq(&self) -> u64{
-        self.print_supported_crypto_algorithms();
+    // fn init_controlq(&self) -> u64{
+    //     self.print_supported_crypto_algorithms();
     
-        let id = 0;
-        let req_slice = {
-            let req_slice = DmaStreamSlice::new(&self.request_buffer, id * CTRL_REQ_SIZE, CTRL_REQ_SIZE);
-            let header = VirtioCryptoCtrlHeader {
-                opcode: VIRTIO_CRYPTO_CIPHER_CREATE_SESSION,
-                algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
-                flag: 0,
-                reserved: 0,
-            };
-            // TODO: Move these logics to the header file.
-            let flf = VirtioCryptoCipherCreateSessionFlf::new(
-                VIRTIO_CRYPTO_CIPHER_AES_CBC,
-                VIRTIO_CRYPTO_OP_ENCRYPT
-            );
-            let sym_create_flf = VirtioCryptoSymCreateSessionFlf::new(
-                flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
-            );
-            let crypto_req = VirtioCryptoOpCtrlReqPartial::new(
-                header, sym_create_flf
-            );
-            req_slice
-                .write_val(0, &crypto_req).unwrap();
-            req_slice.sync().unwrap();
-            req_slice
-        };
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
+    //     let id = 0;
+    //     let req_slice = {
+    //         let req_slice = DmaStreamSlice::new(&self.request_buffer, id * CTRL_REQ_SIZE, CTRL_REQ_SIZE);
+    //         let header = VirtioCryptoCtrlHeader {
+    //             opcode: VIRTIO_CRYPTO_CIPHER_CREATE_SESSION,
+    //             algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
+    //             flag: 0,
+    //             reserved: 0,
+    //         };
+    //         // TODO: Move these logics to the header file.
+    //         let flf = VirtioCryptoCipherSessionFlf::new(
+    //             VIRTIO_CRYPTO_CIPHER_AES_CBC,
+    //             VIRTIO_CRYPTO_OP_ENCRYPT
+    //         );
+    //         let sym_create_flf = VirtioCryptoSymCreateSessionFlf::new(
+    //             flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
+    //         );
+    //         let crypto_req = VirtioCryptoOpCtrlReqFlf::new(
+    //             header, sym_create_flf
+    //         );
+    //         req_slice
+    //             .write_val(0, &crypto_req).unwrap();
+    //         req_slice.sync().unwrap();
+    //         req_slice
+    //     };
+    //     let variable_length_data_stream = {
+    //         let segment = FrameAllocOptions::new(1)
+    //             .uninit(true)
+    //             .alloc_contiguous()
+    //             .unwrap();
+    //         DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+    //     };
 
-        let vlf_slice = {
-            let cipher_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] as [u8; 16];
-            let cipher_data_len = cipher_data.len();
-            let vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
-            vlf_slice.write_bytes(0, &cipher_data).unwrap();
-            vlf_slice.sync().unwrap();
-            vlf_slice
-        };
+    //     let vlf_slice = {
+    //         let cipher_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] as [u8; 16];
+    //         let cipher_data_len = cipher_data.len();
+    //         let vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+    //         vlf_slice.write_bytes(0, &cipher_data).unwrap();
+    //         vlf_slice.sync().unwrap();
+    //         vlf_slice
+    //     };
 
-        let inputs_slice = vec![&req_slice, &vlf_slice];
+    //     let inputs_slice = vec![&req_slice, &vlf_slice];
     
-        let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&self.response_buffer, id * CTRL_RESP_SIZE, CTRL_RESP_SIZE);
-            resp_slice
-                .write_val(0, &VirtioCryptoCreateSessionInput::default())
-                .unwrap();
-            resp_slice
-        };
+    //     let resp_slice = {
+    //         let resp_slice = DmaStreamSlice::new(&self.response_buffer, id * CTRL_RESP_SIZE, CTRL_RESP_SIZE);
+    //         resp_slice
+    //             .write_val(0, &VirtioCryptoCreateSessionInput::default())
+    //             .unwrap();
+    //         resp_slice
+    //     };
     
-        let mut queue = self.controlq.disable_irq().lock();
+    //     let mut queue = self.controlq.disable_irq().lock();
     
-        let token = queue
-            .add_dma_buf(inputs_slice.as_slice(), &[&resp_slice])
-            .expect("add queue failed");
+    //     let token = queue
+    //         .add_dma_buf(inputs_slice.as_slice(), &[&resp_slice])
+    //         .expect("add queue failed");
         
-        if queue.should_notify() {
-            queue.notify();
-        }
+    //     if queue.should_notify() {
+    //         queue.notify();
+    //     }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
+    //     while !queue.can_pop() {
+    //         spin_loop();
+    //     }
+    //     queue.pop_used_with_token(token).expect("pop used failed");
         
-        resp_slice.sync().unwrap();
-        let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
-        early_println!("Status: {:?}", resp);
-        resp.session_id
-    }
+    //     resp_slice.sync().unwrap();
+    //     let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
+    //     early_println!("Status: {:?}", resp);
+    //     resp.session_id
+    // }
 
-    fn init_dataq(&self, session_id: u64) {
-        let id = 1;
-        let req_slice = {
-            let req_slice = DmaStreamSlice::new(&self.request_buffer, id * CTRL_REQ_SIZE, DATA_REQ_SIZE);
-            let header = VirtioCryptoOpHeader {
-                opcode: VIRTIO_CRYPTO_CIPHER_ENCRYPT,
-                algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
-                session_id,
-                flag: 0,
-                padding: 0,
-            };
-            let crypto_data_flf = VirtioCryptoCipherDataFlf {
-                iv_len: 16,
-                src_data_len: 32,
-                dst_data_len: 32,
-                padding: 0,
-            };
-            let data_flf = VirtioCryptoSymDataFlf::new(
-                crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
-            );
-            let crypto_req = VirtioCryptoOpDataReq::new(
-                header, data_flf
-            );
-            req_slice
-                .write_val(0, &crypto_req).unwrap();
-            req_slice.sync().unwrap();
-            req_slice
-        };
+//     fn init_dataq(&self, session_id: u64) {
+//         let id = 1;
+//         let req_slice = {
+//             let req_slice = DmaStreamSlice::new(&self.request_buffer, id * CTRL_REQ_SIZE, DATA_REQ_SIZE);
+//             let header = VirtioCryptoOpHeader {
+//                 opcode: VIRTIO_CRYPTO_CIPHER_ENCRYPT,
+//                 algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
+//                 session_id,
+//                 flag: 0,
+//                 padding: 0,
+//             };
+//             let crypto_data_flf = VirtioCryptoCipherDataFlf {
+//                 iv_len: 16,
+//                 src_data_len: 32,
+//                 dst_data_len: 32,
+//                 padding: 0,
+//             };
+//             let data_flf = VirtioCryptoSymDataFlf::new(
+//                 crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER
+//             );
+//             let crypto_req = VirtioCryptoOpDataReq::new(
+//                 header, data_flf
+//             );
+//             req_slice
+//                 .write_val(0, &crypto_req).unwrap();
+//             req_slice.sync().unwrap();
+//             req_slice
+//         };
 
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
+//         let variable_length_data_stream = {
+//             let segment = FrameAllocOptions::new(1)
+//                 .uninit(true)
+//                 .alloc_contiguous()
+//                 .unwrap();
+//             DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+//         };
 
-        let output_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
-        };
+//         let output_data_stream = {
+//             let segment = FrameAllocOptions::new(1)
+//                 .uninit(true)
+//                 .alloc_contiguous()
+//                 .unwrap();
+//             DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
+//         };
 
-        let iv = [0x00; 16];
-        let src_data = vec![
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
-        ];
-        let rst_data = [0x00; 32];
-        let inhr = VirtioCryptoInhdr::default();
+//         let iv = [0x00; 16];
+//         let src_data = vec![
+//             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+//             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+//         ];
+//         let rst_data = [0x00; 32];
+//         let inhr = VirtioCryptoInhdr::default();
 
-        let (input_slice, _) = {
-            let combined_input = [iv.as_slice(), src_data.as_slice(), rst_data.as_slice(), inhr.as_bytes()].concat();
-            let cipher_data_len = combined_input.len();
-            let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
-            input_slice.write_bytes(0, combined_input.as_slice()).unwrap();
-            input_slice.sync().unwrap();
-            (input_slice, cipher_data_len)
-        };
+//         let (input_slice, _) = {
+//             let combined_input = [iv.as_slice(), src_data.as_slice(), rst_data.as_slice(), inhr.as_bytes()].concat();
+//             let cipher_data_len = combined_input.len();
+//             let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+//             input_slice.write_bytes(0, combined_input.as_slice()).unwrap();
+//             input_slice.sync().unwrap();
+//             (input_slice, cipher_data_len)
+//         };
 
-        let (output_slice, _) = {
-            let combined_output = [rst_data.as_slice(), inhr.as_bytes()].concat();
-            let output_len = combined_output.len();
-            let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
-            output_slice.write_bytes(0, combined_output.as_slice()).unwrap();
-            (output_slice, output_len)
-        };
+//         let (output_slice, _) = {
+//             let combined_output = [rst_data.as_slice(), inhr.as_bytes()].concat();
+//             let output_len = combined_output.len();
+//             let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
+//             output_slice.write_bytes(0, combined_output.as_slice()).unwrap();
+//             (output_slice, output_len)
+//         };
 
-        let mut queue = self.dataqs[0].disable_irq().lock();
-        let token = queue
-            .add_dma_buf(&[&req_slice, &input_slice], &[&output_slice])
-            .expect("add queue failed");
+//         let mut queue = self.dataqs[0].disable_irq().lock();
+//         let token = queue
+//             .add_dma_buf(&[&req_slice, &input_slice], &[&output_slice])
+//             .expect("add queue failed");
 
-        if queue.should_notify() {
-            queue.notify();
-        }
+//         if queue.should_notify() {
+//             queue.notify();
+//         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
+//         while !queue.can_pop() {
+//             spin_loop();
+//         }
 
-        queue.pop_used_with_token(token).expect("pop used failed");
+//         queue.pop_used_with_token(token).expect("pop used failed");
 
-        output_slice.sync().unwrap();
-        let result = &mut [0u8; 32];
-        output_slice.read_bytes(0, result).unwrap();
-        // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
-        early_println!("Data: {:?}", result);
-        // early_println!("Status: {:?}", status);
-    }
+//         output_slice.sync().unwrap();
+//         let result = &mut [0u8; 32];
+//         output_slice.read_bytes(0, result).unwrap();
+//         // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
+//         early_println!("Data: {:?}", result);
+//         // early_println!("Status: {:?}", status);
+//     }
 }
 
-const CTRL_REQ_SIZE: usize = size_of::<VirtioCryptoOpCtrlReqPartial>();
-const CTRL_RESP_SIZE: usize = size_of::<VirtioCryptoCreateSessionInput>();
-const DATA_REQ_SIZE: usize = size_of::<VirtioCryptoOpDataReq>();
+// const CTRL_REQ_SIZE: usize = size_of::<VirtioCryptoOpCtrlReqFlf>();
+// const CTRL_RESP_SIZE: usize = size_of::<VirtioCryptoCreateSessionInput>();
+// const DATA_REQ_SIZE: usize = size_of::<VirtioCryptoOpDataReq>();
 
 fn slice_to_padded_array(slice: &[u8]) -> [u8; 56] {
     let mut array = [0u8; 56]; // Initialize with zeroes

@@ -1,5 +1,5 @@
 pub mod services;
-pub mod symalg;
+pub mod sym;
 pub mod hash;
 pub mod mac;
 pub mod aead;

@@ -1,4 +1,6 @@
 #![allow(unsafe_code)]
+use core::panic;
+
 use ostd::Pod;
 use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_CIPHER,
@@ -8,7 +10,7 @@ use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AKCIPHER,
 };
 
-use super::service::symalg::{VirtioCryptoSymCreateSessionFlf, VirtioCryptoSymDataFlf};
+use super::service::sym::{VirtioCryptoSymCreateSessionFlf, VirtioCryptoSymDataFlf};
 // use core::mem;
 
 // Operation Status
@@ -61,15 +63,68 @@ pub struct VirtioCryptoCtrlHeader {
     pub reserved: u32,
 }
 
+impl VirtioCryptoCtrlHeader {
+    pub const VIRTIO_CRYPTO_CREATE_SESSION: u32 = 0;
+    pub const VIRTIO_CRYPTO_DESTROY_SESSION: u32 = 1;
+
+    pub fn new(service: u32, algo: u32, op: u32) -> VirtioCryptoCtrlHeader {
+        let opcode = match service {
+            VIRTIO_CRYPTO_SERVICE_CIPHER => {
+                match op {
+                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_CIPHER_CREATE_SESSION,
+                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION,
+                    _ => panic!("no such op")
+                }
+            },
+            VIRTIO_CRYPTO_SERVICE_HASH => {
+                match op {
+                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_HASH_CREATE_SESSION,
+                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_HASH_DESTROY_SESSION,
+                    _ => panic!("no such op")
+                }
+            },
+            VIRTIO_CRYPTO_SERVICE_MAC => {
+                match op {
+                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_MAC_CREATE_SESSION,
+                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_MAC_DESTROY_SESSION,
+                    _ => panic!("no such op")
+                }
+            },
+            VIRTIO_CRYPTO_SERVICE_AEAD => {
+                match op {
+                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_AEAD_CREATE_SESSION,
+                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_AEAD_DESTROY_SESSION,
+                    _ => panic!("no such op")
+                }
+            },
+            VIRTIO_CRYPTO_SERVICE_AKCIPHER => {
+                match op {
+                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION,
+                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_AKCIPHER_DESTROY_SESSION,
+                    _ => panic!("no such op")
+                }
+            },
+            _ => panic!("no such service")
+        };
+    
+        VirtioCryptoCtrlHeader {
+            opcode,
+            algo,
+            flag: 0,
+            reserved: 0,
+        }
+    }
+}
+
 pub const VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY: u32 = 56;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
-pub struct VirtioCryptoOpCtrlReqPartial {
+pub struct VirtioCryptoOpCtrlReqFlf {
     pub header: VirtioCryptoCtrlHeader,
     pub op_flf: [u8; VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY as usize],
 }
 
-impl VirtioCryptoOpCtrlReqPartial {
+impl VirtioCryptoOpCtrlReqFlf {
     pub fn new(header: VirtioCryptoCtrlHeader, op_flf: VirtioCryptoSymCreateSessionFlf) -> Self {
         let mut op_flf_bytes = [0; VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY as usize];
         let op_flf_bytes_slice = op_flf.as_bytes();
@@ -79,6 +134,8 @@ impl VirtioCryptoOpCtrlReqPartial {
             op_flf: op_flf_bytes,
         }
     }
+
+    pub const SIZE: usize = size_of::<Self>();
 }
 
 #[repr(C)]
@@ -90,6 +147,8 @@ pub struct VirtioCryptoCreateSessionInput {
 }
 
 impl VirtioCryptoCreateSessionInput {
+    pub const SIZE: usize = size_of::<Self>();
+
     pub fn default() -> Self {
         Self {
             session_id: 0,
@@ -173,6 +232,8 @@ pub struct VirtioCryptoOpDataReq {
 }
 
 impl VirtioCryptoOpDataReq {
+    pub const SIZE: usize = size_of::<VirtioCryptoOpDataReq>();
+
     pub fn new(header: VirtioCryptoOpHeader, op_flf: VirtioCryptoSymDataFlf) -> Self {
         let mut op_flf_bytes = [0; VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY as usize];
         let op_flf_bytes_slice = op_flf.as_bytes();
@@ -189,3 +250,8 @@ impl VirtioCryptoOpDataReq {
 pub struct VirtioCryptoInhdr {
     pub status: u8
 }
+
+
+
+
+
