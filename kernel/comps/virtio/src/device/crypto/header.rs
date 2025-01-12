@@ -125,9 +125,8 @@ pub struct VirtioCryptoOpCtrlReqFlf {
 }
 
 impl VirtioCryptoOpCtrlReqFlf {
-    pub fn new(header: VirtioCryptoCtrlHeader, op_flf: VirtioCryptoSymCreateSessionFlf) -> Self {
+    pub fn new(header: VirtioCryptoCtrlHeader, op_flf_bytes_slice: &[u8]) -> Self {
         let mut op_flf_bytes = [0; VIRTIO_CRYPTO_CTRLQ_OP_SPEC_HDR_LEGACY as usize];
-        let op_flf_bytes_slice = op_flf.as_bytes();
         op_flf_bytes[..op_flf_bytes_slice.len()].copy_from_slice(&op_flf_bytes_slice);
         Self {
             header,
@@ -164,10 +163,26 @@ pub struct VirtioCryptoDestroySessionFlf {
     pub session_id: u64,
 }
 
+impl VirtioCryptoDestroySessionFlf {
+    pub fn new(session_id: u64) -> Self {
+        Self {
+            session_id,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoDestroySessionInput {
     pub status: u8,
+}
+
+impl VirtioCryptoDestroySessionInput {
+    pub fn default() -> Self {
+        Self {
+            status: _VIRTIO_CRYPTO_NOTREADY as u8,
+        }
+    }
 }
 
 // Header for Dataq

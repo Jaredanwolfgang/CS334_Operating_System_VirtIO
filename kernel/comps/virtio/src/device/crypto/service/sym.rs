@@ -14,11 +14,14 @@ use crate::alloc::string::ToString;
 use crate::device::crypto::device::CryptoDevice;
 use crate::device::crypto::header::VirtioCryptoCreateSessionInput;
 use crate::device::crypto::header::VirtioCryptoCtrlHeader;
+use crate::device::crypto::header::VirtioCryptoDestroySessionFlf;
+use crate::device::crypto::header::VirtioCryptoDestroySessionInput;
 use crate::device::crypto::header::VirtioCryptoInhdr;
 use crate::device::crypto::header::VirtioCryptoOpCtrlReqFlf;
 use crate::device::crypto::header::VirtioCryptoOpDataReq;
 use crate::device::crypto::header::VirtioCryptoOpHeader;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DECRYPT;
+use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_ENCRYPT;
 use alloc::string::String;
 
@@ -130,20 +133,19 @@ impl Cipher {
     pub fn create_session(device: &CryptoDevice, algo: u32, cipher_key: &[u8]) -> u64 {
         // TODO_RAY: 检查service和algo的合法性
         // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
-        let id = 0;
 
         let req_flf_slice = {
             // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
-            let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, id * VirtioCryptoOpCtrlReqFlf::SIZE, VirtioCryptoOpCtrlReqFlf::SIZE);
+            let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
             
             let header = VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_CIPHER, algo, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION);
 
             let op_flf = {
-                let op_flf = VirtioCryptoCipherSessionFlf::new(algo, VIRTIO_CRYPTO_OP_ENCRYPT);
+                let op_flf = VirtioCryptoCipherSessionFlf::new(algo, VirtioCryptoCipherSessionFlf::VIRTIO_CRYPTO_OP_ENCRYPT);
                 VirtioCryptoSymCreateSessionFlf::new(op_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER)
             };
 
-            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf);
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
 
             req_flf_slice.write_val(0, &req_flf).unwrap();
             req_flf_slice.sync().unwrap();
@@ -170,7 +172,7 @@ impl Cipher {
         let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
         
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, id * VirtioCryptoCreateSessionInput::SIZE, VirtioCryptoCreateSessionInput::SIZE);
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
             resp_slice
                 .write_val(0, &VirtioCryptoCreateSessionInput::default())
                 .unwrap();
@@ -198,12 +200,54 @@ impl Cipher {
         resp.session_id
     }
 
-    // 修改传入参数
-    pub fn encrypte(device: &CryptoDevice, algo: u32, session_id: u64, iv: Vec<u8>, src_data: Vec<u8>, dst_data_len: u32) -> Vec<u8> {
-        let id = 0;
+    pub fn destroy_session(device: &CryptoDevice, session_id: u64) {
+        // TODO_RAY: 检查service和algo的合法性
+        // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
+
         let req_slice = {
             // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
-            let req_slice = DmaStreamSlice::new(&device.request_buffer, id * VirtioCryptoOpDataReq::SIZE, VirtioCryptoOpDataReq::SIZE);
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+            let header = VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_CIPHER, 0, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION);
+            let destroy_session_flf = VirtioCryptoDestroySessionFlf::new(session_id);
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, destroy_session_flf.as_bytes());
+
+            req_slice.write_val(0, &req_flf).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+        
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            resp_slice
+                .write_val(0, &VirtioCryptoDestroySessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.controlq.disable_irq().lock();
+    
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+        
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+        
+        resp_slice.sync().unwrap();
+        let resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
+        early_println!("Status: {:?}", resp);
+    }
+
+    pub fn encrypt(device: &CryptoDevice, algo: u32, session_id: u64, iv: Vec<u8>, src_data: Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+        let req_slice = {
+            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
             let header = VirtioCryptoOpHeader {
                 opcode: VIRTIO_CRYPTO_CIPHER_ENCRYPT,
                 algo,
@@ -249,21 +293,21 @@ impl Cipher {
         let dst_data = vec![0; dst_data_len as usize];
         let inhr = VirtioCryptoInhdr::default();
 
-        let (input_slice, _) = {
+        let input_slice = {
             let combined_input = [iv.as_slice(), src_data.as_slice()].concat();
             let cipher_data_len = combined_input.len();
             let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
             input_slice.write_bytes(0, combined_input.as_slice()).unwrap();
             input_slice.sync().unwrap();
-            (input_slice, cipher_data_len)
+            input_slice
         };
 
-        let (output_slice, _) = {
+        let output_slice = {
             let combined_output = [dst_data.as_slice(), inhr.as_bytes()].concat();
             let output_len = combined_output.len();
             let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
             output_slice.write_bytes(0, combined_output.as_slice()).unwrap();
-            (output_slice, output_len)
+            output_slice
         };
 
         let mut queue = device.dataqs[0].disable_irq().lock();
@@ -285,7 +329,97 @@ impl Cipher {
         let result = &mut [0u8; 32];
         output_slice.read_bytes(0, result).unwrap();
         // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
-        early_println!("Data: {:?}", result);
+        early_println!("Data: {:X?}", result);
+        // early_println!("Status: {:?}", status);
+        result.to_vec()
+    }
+
+    pub fn decrypt(device: &CryptoDevice, algo: u32, session_id: u64, iv: Vec<u8>, src_data: Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+        let req_slice = {
+            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
+            let header = VirtioCryptoOpHeader {
+                opcode: VIRTIO_CRYPTO_CIPHER_DECRYPT,
+                algo,
+                session_id,
+                flag: 0,
+                padding: 0,
+            };
+            
+            let sym_data_flf = {
+                let crypto_data_flf = VirtioCryptoCipherDataFlf {
+                    iv_len: iv.len() as u32,
+                    src_data_len: src_data.len() as u32,
+                    dst_data_len: dst_data_len,
+                    padding: 0,
+                };    
+                VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER)
+            };
+            let crypto_req = VirtioCryptoOpDataReq::new(
+                header, sym_data_flf
+            );
+            req_slice
+                .write_val(0, &crypto_req).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+
+        let variable_length_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+        };
+
+        let output_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
+        };
+
+        let dst_data = vec![0; dst_data_len as usize];
+        let inhr = VirtioCryptoInhdr::default();
+
+        let input_slice = {
+            let combined_input = [iv.as_slice(), src_data.as_slice()].concat();
+            let cipher_data_len = combined_input.len();
+            let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+            input_slice.write_bytes(0, combined_input.as_slice()).unwrap();
+            input_slice.sync().unwrap();
+            input_slice
+        };
+
+        let output_slice = {
+            let combined_output = [dst_data.as_slice(), inhr.as_bytes()].concat();
+            let output_len = combined_output.len();
+            let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
+            output_slice.write_bytes(0, combined_output.as_slice()).unwrap();
+            output_slice
+        };
+
+        let mut queue = device.dataqs[0].disable_irq().lock();
+        let token = queue
+            .add_dma_buf(&[&req_slice, &input_slice], &[&output_slice])
+            .expect("add queue failed");
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+
+        queue.pop_used_with_token(token).expect("pop used failed");
+
+        output_slice.sync().unwrap();
+        let result = &mut [0u8; 32];
+        output_slice.read_bytes(0, result).unwrap();
+        // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
+        early_println!("Data: {:X?}", result);
         // early_println!("Status: {:?}", status);
         result.to_vec()
     }
@@ -296,8 +430,7 @@ impl Cipher {
 
 
 
-pub const VIRTIO_CRYPTO_OP_ENCRYPT: u32 = 1;
-pub const VIRTIO_CRYPTO_OP_DECRYPT: u32 = 2;
+
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -313,13 +446,16 @@ impl Default for VirtioCryptoCipherSessionFlf {
         Self {
             algo: VIRTIO_CRYPTO_CIPHER_AES_CBC,
             key_len: 16,
-            op: VIRTIO_CRYPTO_OP_ENCRYPT,
+            op: VirtioCryptoCipherSessionFlf::VIRTIO_CRYPTO_OP_ENCRYPT,
             padding: 0,
         }
     }
 }
 
 impl VirtioCryptoCipherSessionFlf {
+    pub const VIRTIO_CRYPTO_OP_ENCRYPT: u32 = 1;
+    pub const VIRTIO_CRYPTO_OP_DECRYPT: u32 = 2;
+
     pub fn new(algo: u32, op: u32) -> Self {
         let key_len = match algo {
             VIRTIO_CRYPTO_CIPHER_ARC4 => 16,
