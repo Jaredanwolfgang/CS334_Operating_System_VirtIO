@@ -1,4 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
+use typeflags_util::assert;
 use core::{hint::spin_loop, mem::size_of};
 use log::debug;
 use id_alloc::IdAlloc;
@@ -125,21 +126,22 @@ impl CryptoDevice {
 
         // 测试设备
 
-        let session_id = Cipher::create_session(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &[0 as u8;16]);
-
+        let cipher_key = [0 as u8; 16];
         let iv = vec![0x00; 16];
         // let src_data = vec![
         //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
         //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
         // ];
-        let src_data = vec![
+        let data = vec![
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         ];
-        let encrypte_result = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, session_id, iv.clone(), src_data.clone(), src_data.len() as u32);
-        let decrypte_result = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, session_id, iv.clone(), encrypte_result.clone(), src_data.len() as u32);
-        Cipher::destroy_session(&device, session_id);
         
+        let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
+        let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
+
+        assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+
         Ok(())
     }
 

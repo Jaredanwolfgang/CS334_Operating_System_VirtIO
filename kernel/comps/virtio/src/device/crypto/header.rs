@@ -219,6 +219,12 @@ pub struct VirtioCryptoOpHeader {
     pub padding: u32,
 }
 
+impl VirtioCryptoOpHeader {
+    pub fn new() {
+        
+    }
+}
+
 
 /*
 struct virtio_crypto_op_data_req { 
