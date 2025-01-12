@@ -17,12 +17,7 @@ use crate::{
         crypto::{
             header::*,
             service::{
-                aead::SupportedAeads,
-                akcipher::SupportedAkCiphers,
-                sym::*,
-                hash::*,
-                mac::SupportedMacs,
-                services::{CryptoServiceMap, SupportedCryptoServices},
+                aead::SupportedAeads, akcipher::{Akcipher, SupportedAkCiphers, VirtioCryptoRsaSessionPara}, hash::*, mac::SupportedMacs, services::{CryptoServiceMap, SupportedCryptoServices}, sym::*
             },
         },
         VirtioDeviceError,
@@ -141,6 +136,11 @@ impl CryptoDevice {
         let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
 
         assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+
+        // akcipher_key需要修改以满足rsa算法的要求
+        // 否则直接调用该方法会使device返回Err
+        // let akcipher_key = [0 as u8; 16];
+        // Akcipher::create_session_rsa(&device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_RAW_PADDING, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_NO_HASH, Akcipher::PUBLIC, &akcipher_key);
 
         Ok(())
     }
