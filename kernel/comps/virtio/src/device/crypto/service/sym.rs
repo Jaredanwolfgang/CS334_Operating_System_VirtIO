@@ -23,11 +23,17 @@ use crate::device::crypto::header::VirtioCryptoOpHeader;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DECRYPT;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_ENCRYPT;
+use crate::device::crypto::header::VIRTIO_CRYPTO_HASH;
+use crate::device::crypto::header::VIRTIO_CRYPTO_MAC;
 use alloc::string::String;
 
 use super::hash::*;
 use super::mac::*;
 use super::services::VIRTIO_CRYPTO_SERVICE_CIPHER;
+use super::services::VIRTIO_CRYPTO_SERVICE_HASH;
+use super::services::VIRTIO_CRYPTO_SERVICE_MAC;
+use super::services::VIRTIO_CRYPTO_SERVICE_AEAD;
+use super::services::VIRTIO_CRYPTO_SERVICE_AKCIPHER;
 
 // ControlQ
 // Symmetric Algorithms: Cipher
@@ -478,6 +484,284 @@ impl VirtioCryptoChainAlgSessionFlf {
         }
     }
 }
+
+
+pub struct ChainAlg {
+
+}
+
+impl ChainAlg {
+
+    pub const ENCRYPT: u32 = 1;
+    pub const DECRYPT: u32 = 2;
+
+    pub fn create_session(device: &CryptoDevice, alg_chain_order: u32, hash_mode: u32, algo: u32, /*encrypt_or_decrypt: u32,*/ cipher_key: &[u8]) -> u64 {
+        // TODO_RAY: 检查service和algo的合法性
+        // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
+
+        let req_flf_slice = {
+            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
+            let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+            
+            let header = match hash_mode {
+                VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_HASH, algo, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION),
+                VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_MAC, algo, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION),
+                VIRTIO_CRYPTO_SYM_HASH_MODE_NESTED => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_HASH, algo, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION),
+                _ => unimplemented!("Unsupported hash mode: {}", hash_mode),
+            };
+
+            let op_flf = {
+                // let cipher_hdr = {
+                //     let op = match encrypt_or_decrypt {
+                //         Cipher::ENCRYPT => VirtioCryptoCipherSessionFlf::VIRTIO_CRYPTO_OP_ENCRYPT,
+                //         Cipher::DECRYPT => VirtioCryptoCipherSessionFlf::VIRTIO_CRYPTO_OP_DECRYPT,
+                //         _ => panic!("invalid para: encrypt_or_decrypt"),
+                //     };
+                //     VirtioCryptoCipherSessionFlf::new(algo, op);
+                // };
+                let cipher_hdr = VirtioCryptoCipherSessionFlf::new(
+                    algo, VirtioCryptoCipherSessionFlf::VIRTIO_CRYPTO_OP_ENCRYPT  // TODO_ZSL: always use encrypt
+                );
+                let op_flf = VirtioCryptoChainAlgSessionFlf::new(
+                    alg_chain_order, hash_mode, algo, cipher_hdr, 0  // TODO_ZSL: aad_len = 0?
+                );
+                VirtioCryptoSymCreateSessionFlf::new(op_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING)
+            };
+
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
+
+            req_flf_slice.write_val(0, &req_flf).unwrap();
+            req_flf_slice.sync().unwrap();
+            req_flf_slice
+        };
+
+        // TODO_RAY: 或许需要为device添加新的buffer代替variable_length_data_stream
+        let variable_length_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+        };
+
+        let req_vlf_slice = {
+            let req_vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_key.len());
+            req_vlf_slice.write_bytes(0, cipher_key).unwrap();
+            req_vlf_slice
+        };
+
+        let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
+        
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            resp_slice
+                .write_val(0, &VirtioCryptoCreateSessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.controlq.disable_irq().lock();
+    
+        let token = queue
+            .add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice])
+            .expect("add queue failed");
+        
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+        
+        resp_slice.sync().unwrap();
+        let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
+        early_println!("Status: {:?}", resp);
+        resp.session_id
+    }
+
+    pub fn destroy_session(device: &CryptoDevice, session_id: u64, hash_mode: u32) {
+        // TODO_RAY: 检查service和algo的合法性
+        // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
+
+        let req_slice = {
+            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+            let header = match hash_mode {
+                VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_HASH, 0, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION),
+                VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_MAC, 0, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION),
+                VIRTIO_CRYPTO_SYM_HASH_MODE_NESTED => VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_HASH, 0, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION),
+                _ => unimplemented!("Unsupported hash mode: {}", hash_mode),
+            };
+            let destroy_session_flf = VirtioCryptoDestroySessionFlf::new(session_id);
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, destroy_session_flf.as_bytes());
+
+            req_slice.write_val(0, &req_flf).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+        
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            resp_slice
+                .write_val(0, &VirtioCryptoDestroySessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.controlq.disable_irq().lock();
+    
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+        
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+        
+        resp_slice.sync().unwrap();
+        let resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
+        early_println!("Status: {:?}", resp);
+    }
+
+    pub fn hash_or_mac(device: &CryptoDevice, algo: u32, session_id: u64, hash_mode: u32, iv: &Vec<u8>, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+        let req_slice = {
+            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
+            let opcode = match hash_mode {
+                VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN => VIRTIO_CRYPTO_HASH,
+                VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => VIRTIO_CRYPTO_MAC,
+                VIRTIO_CRYPTO_SYM_HASH_MODE_NESTED => VIRTIO_CRYPTO_HASH,
+                _ => unimplemented!("Unsupported hash mode: {}", hash_mode),
+            };
+            let header = VirtioCryptoOpHeader {
+                opcode,
+                algo,
+                session_id,
+                flag: 0,
+                padding: 0,
+            };
+            
+            let sym_data_flf = {
+                let tmp_hash_create_session = VirtioCryptoHashCreateSessionFlf::new(algo);
+                let crypto_data_flf = VirtioCryptoAlgChainDataFlf {
+                    iv_len: iv.len() as u32,
+                    src_data_len: src_data.len() as u32,
+                    dst_data_len: dst_data_len,
+                    cipher_start_src_offset: 0,  // TODO_ZSL: may be wrong
+                    len_to_cipher: src_data.len() as u32,
+                    hash_start_src_offset: 0,
+                    len_to_hash: src_data.len() as u32,
+                    aad_len: 0,
+                    hash_result_len: tmp_hash_create_session.hash_result_len,
+                    reserved: 0,
+                };
+                VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING)
+            };
+            let crypto_req = VirtioCryptoOpDataReq::new(
+                header, sym_data_flf
+            );
+            req_slice
+                .write_val(0, &crypto_req).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+
+        let variable_length_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+        };
+
+        let output_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
+        };
+
+        let dst_data = vec![0; dst_data_len as usize];
+        let inhr = VirtioCryptoInhdr::default();
+
+        let input_slice = {
+            let combined_input = [iv.as_slice(), src_data.as_slice()].concat();
+            let cipher_data_len = combined_input.len();
+            let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+            input_slice.write_bytes(0, combined_input.as_slice()).unwrap();
+            input_slice.sync().unwrap();
+            input_slice
+        };
+
+        let output_slice = {
+            let combined_output = [dst_data.as_slice(), inhr.as_bytes()].concat();
+            let output_len = combined_output.len();
+            let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
+            output_slice.write_bytes(0, combined_output.as_slice()).unwrap();
+            output_slice
+        };
+
+        let mut queue = device.dataqs[0].disable_irq().lock();
+        let token = queue
+            .add_dma_buf(&[&req_slice, &input_slice], &[&output_slice])
+            .expect("add queue failed");
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+
+        queue.pop_used_with_token(token).expect("pop used failed");
+
+        output_slice.sync().unwrap();
+        let result = &mut [0u8; 32];
+        output_slice.read_bytes(0, result).unwrap();
+        // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
+        early_println!("Data: {:X?}", result);
+        // early_println!("Status: {:?}", status);
+        result.to_vec()
+    }
+
+    pub fn encrypt_then_hash(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, algo, cipher_key);
+        let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, iv, src_data, src_data.len() as u32);
+        ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN);
+        dst_data
+    }
+
+    pub fn hash_then_encrypt(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_HASH_THEN_CIPHER, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, algo, cipher_key);
+        let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, iv, src_data, src_data.len() as u32);
+        ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN);
+        dst_data
+    }
+
+    pub fn encrypt_then_mac(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, algo, cipher_key);
+        let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, iv, src_data, src_data.len() as u32);
+        ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH);
+        dst_data
+    }
+
+    pub fn mac_then_encrypt(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_HASH_THEN_CIPHER, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, algo, cipher_key);
+        let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, iv, src_data, src_data.len() as u32);
+        ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH);
+        dst_data
+    }
+}
+
 
 // Symmetric Algorithms
 pub const VIRTIO_CRYPTO_SYM_OP_NONE: u32 = 0;

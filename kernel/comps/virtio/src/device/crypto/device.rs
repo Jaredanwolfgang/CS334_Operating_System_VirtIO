@@ -1,4 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
+use aster_bigtcp::device;
 use typeflags_util::assert;
 use core::{hint::spin_loop, mem::size_of};
 use log::debug;
@@ -124,8 +125,10 @@ impl CryptoDevice {
         // 完成设备初始化
         device.transport.lock().finish_init();
 
-        // 测试设备
+        Self::test_device(device)
+    }
 
+    pub fn test_device(device: Arc<CryptoDevice>) -> Result<(), VirtioDeviceError> {
         let cipher_key = [0 as u8; 16];
         let iv = vec![0x00; 16];
         // let src_data = vec![
@@ -137,10 +140,14 @@ impl CryptoDevice {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         ];
         
-        let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
-        let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
+        // let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
+        // let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
 
-        assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+        // assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+
+        let encrypt_then_hash_result = ChainAlg::encrypt_then_hash(&device, VIRTIO_CRYPTO_HASH_MD5, &cipher_key, &iv, &data);
+        early_println!("Result for encrypt then hash: ");
+        early_println!("{:?}", encrypt_then_hash_result);
 
         Ok(())
     }

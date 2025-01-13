@@ -69,27 +69,27 @@ impl VirtioCryptoCtrlHeader {
 
     pub fn new(service: u32, algo: u32, op: u32) -> VirtioCryptoCtrlHeader {
         let opcode = match service {
-            VIRTIO_CRYPTO_SERVICE_CIPHER => {
+            VIRTIO_CRYPTO_SERVICE_CIPHER | VIRTIO_CRYPTO_SERVICE_HASH | VIRTIO_CRYPTO_SERVICE_MAC => {
                 match op {
                     Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_CIPHER_CREATE_SESSION,
                     Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION,
                     _ => panic!("no such op")
                 }
             },
-            VIRTIO_CRYPTO_SERVICE_HASH => {
-                match op {
-                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_HASH_CREATE_SESSION,
-                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_HASH_DESTROY_SESSION,
-                    _ => panic!("no such op")
-                }
-            },
-            VIRTIO_CRYPTO_SERVICE_MAC => {
-                match op {
-                    Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_MAC_CREATE_SESSION,
-                    Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_MAC_DESTROY_SESSION,
-                    _ => panic!("no such op")
-                }
-            },
+            // VIRTIO_CRYPTO_SERVICE_HASH => {
+            //     match op {
+            //         Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_HASH_CREATE_SESSION,
+            //         Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_HASH_DESTROY_SESSION,
+            //         _ => panic!("no such op")
+            //     }
+            // },
+            // VIRTIO_CRYPTO_SERVICE_MAC => {
+            //     match op {
+            //         Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_MAC_CREATE_SESSION,
+            //         Self::VIRTIO_CRYPTO_DESTROY_SESSION => VIRTIO_CRYPTO_MAC_DESTROY_SESSION,
+            //         _ => panic!("no such op")
+            //     }
+            // },
             VIRTIO_CRYPTO_SERVICE_AEAD => {
                 match op {
                     Self::VIRTIO_CRYPTO_CREATE_SESSION => VIRTIO_CRYPTO_AEAD_CREATE_SESSION,
