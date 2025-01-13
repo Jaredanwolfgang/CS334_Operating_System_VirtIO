@@ -120,6 +120,7 @@ impl CryptoDevice {
         // 完成设备初始化
         device.transport.lock().finish_init();
 
+        device.print_supported_crypto_algorithms();
         Self::test_device(device)
     }
 
@@ -135,21 +136,22 @@ impl CryptoDevice {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         ];
         
-        // let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
-        // let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
+        let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
+        let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
 
-        // assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+        assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
 
-        let mut chain_alg = ChainAlg::new(
-            ChainAlg::ENCRYPT,
-            VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH,
-            VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN,
-            VIRTIO_CRYPTO_HASH_SHA1,
-            VIRTIO_CRYPTO_CIPHER_AES_CBC,
-        );
-        let encrypt_then_hash_result = chain_alg.encrypt_then_hash(&device, &cipher_key, &[], &iv, &data);
-        early_println!("Result for encrypt then hash: ");
-        early_println!("{:?}", encrypt_then_hash_result);
+        // Testing chain algorithm: qemu-backend doesn't support
+        // let mut chain_alg = ChainAlg::new(
+        //     ChainAlg::ENCRYPT,
+        //     VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH,
+        //     VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN,
+        //     VIRTIO_CRYPTO_HASH_SHA1,
+        //     VIRTIO_CRYPTO_CIPHER_AES_CBC,
+        // );
+        // let chain_alg_result = chain_alg.chaining_algorithms(&device, &cipher_key, &[], &iv, &data);
+        // early_println!("Result for chaining algorithm: ");
+        // early_println!("{:?}", chain_alg_result);
 
         // akcipher_key需要修改以满足rsa算法的要求
         // 否则直接调用该方法会使device返回Err
