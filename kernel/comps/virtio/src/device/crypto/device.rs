@@ -140,7 +140,14 @@ impl CryptoDevice {
 
         // assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
 
-        let encrypt_then_hash_result = ChainAlg::encrypt_then_hash(&device, VIRTIO_CRYPTO_HASH_MD5, &cipher_key, &iv, &data);
+        let mut chain_alg = ChainAlg::new(
+            ChainAlg::ENCRYPT,
+            VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH,
+            VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN,
+            VIRTIO_CRYPTO_HASH_SHA1,
+            VIRTIO_CRYPTO_CIPHER_AES_CBC,
+        );
+        let encrypt_then_hash_result = chain_alg.encrypt_then_hash(&device, &cipher_key, &[], &iv, &data);
         early_println!("Result for encrypt then hash: ");
         early_println!("{:?}", encrypt_then_hash_result);
 

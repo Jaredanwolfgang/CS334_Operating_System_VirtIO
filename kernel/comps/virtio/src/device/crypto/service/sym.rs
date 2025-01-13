@@ -1,6 +1,6 @@
 use core::hint::spin_loop;
-use core::simd::u8x16;
-use core::slice::SlicePattern;
+// use core::simd::u8x16;
+// use core::slice::SlicePattern;
 
 use alloc::vec;
 use bitflags::bitflags;
@@ -24,15 +24,11 @@ use crate::device::crypto::header::VirtioCryptoOpDataReq;
 use crate::device::crypto::header::VirtioCryptoOpHeader;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DECRYPT;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_ENCRYPT;
-use crate::device::crypto::header::VIRTIO_CRYPTO_HASH;
-use crate::device::crypto::header::VIRTIO_CRYPTO_MAC;
 use alloc::string::String;
 
 use super::hash::*;
 use super::mac::*;
 use super::services::VIRTIO_CRYPTO_SERVICE_CIPHER;
-use super::services::VIRTIO_CRYPTO_SERVICE_HASH;
-use super::services::VIRTIO_CRYPTO_SERVICE_MAC;
 
 // ControlQ
 // Symmetric Algorithms: Cipher
@@ -628,14 +624,14 @@ impl ChainAlg {
         early_println!("Status: {:?}", resp);
     }
 
-    pub fn hash_or_mac(&self, device: &CryptoDevice, hash_mode: u32, iv: &Vec<u8>, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+    pub fn hash_or_mac(&self, device: &CryptoDevice, iv: &Vec<u8>, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
         let req_slice = {
             // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
             let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
             let header = VirtioCryptoOpHeader {
                 opcode: match self.service {
-                    ChainAlg::ENCRYPT => VIRTIO_CRYPTO_HASH,
-                    ChainAlg::DECRYPT => VIRTIO_CRYPTO_MAC,
+                    ChainAlg::ENCRYPT => VIRTIO_CRYPTO_CIPHER_ENCRYPT,
+                    ChainAlg::DECRYPT => VIRTIO_CRYPTO_CIPHER_DECRYPT,
                     _ => panic!("invalid para: service"),
                 },
                 algo: self.cipher_algo,
@@ -645,17 +641,27 @@ impl ChainAlg {
             };
             
             let sym_data_flf = {
-                let tmp_hash_create_session = VirtioCryptoHashCreateSessionFlf::new(algo);
+                let hash_result_len = match self.hash_mode {
+                    VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN => {
+                        let tmp_hash_create_session = VirtioCryptoHashCreateSessionFlf::new(self.hash_algo);
+                        tmp_hash_create_session.hash_result_len
+                    },
+                    VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => {
+                        let tmp_mac_create_session = VirtioCryptoMacCreateSessionFlf::new(self.hash_algo);
+                        tmp_mac_create_session.hash_result_len
+                    },
+                    _ => unimplemented!("Unsupported hash mode: {}", self.hash_mode),
+                };
                 let crypto_data_flf = VirtioCryptoAlgChainDataFlf {
                     iv_len: iv.len() as u32,
                     src_data_len: src_data.len() as u32,
-                    dst_data_len: dst_data_len,
+                    dst_data_len,
                     cipher_start_src_offset: 0,  // TODO_ZSL: may be wrong
                     len_to_cipher: src_data.len() as u32,
                     hash_start_src_offset: 0,
                     len_to_hash: src_data.len() as u32,
                     aad_len: 0,
-                    hash_result_len: tmp_hash_create_session.hash_result_len,
+                    hash_result_len,
                     reserved: 0,
                 };
                 VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING)
@@ -732,7 +738,7 @@ impl ChainAlg {
     pub fn encrypt_then_hash(mut self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
         let session_id = ChainAlg::create_session(&self, device, cipher_key, auth_key);
         self.session_id = session_id;
-        let dst_data = ChainAlg::hash_or_mac(&self, device, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, iv, src_data, src_data.len() as u32);
+        let dst_data = ChainAlg::hash_or_mac(&self, device, iv, src_data, src_data.len() as u32);
         ChainAlg::destroy_session(&self, device);
         dst_data
     }
