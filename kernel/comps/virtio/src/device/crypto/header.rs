@@ -10,7 +10,7 @@ use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AKCIPHER,
 };
 
-use super::service::sym::{VirtioCryptoSymCreateSessionFlf, VirtioCryptoSymDataFlf};
+use super::service::sym::VirtioCryptoSymDataFlf;
 // use core::mem;
 
 // Operation Status
@@ -178,6 +178,8 @@ pub struct VirtioCryptoDestroySessionInput {
 }
 
 impl VirtioCryptoDestroySessionInput {
+    pub const SIZE: usize = size_of::<Self>();
+
     pub fn default() -> Self {
         Self {
             status: _VIRTIO_CRYPTO_NOTREADY as u8,
@@ -270,6 +272,10 @@ impl VirtioCryptoOpDataReq {
 #[derive(Clone, Copy, Debug, Pod, Default)]
 pub struct VirtioCryptoInhdr {
     pub status: u8
+}
+
+impl VirtioCryptoInhdr {
+    pub const SIZE: u32 = size_of::<Self>() as u32;
 }
 
 

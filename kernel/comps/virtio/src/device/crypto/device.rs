@@ -18,12 +18,7 @@ use crate::{
         crypto::{
             header::*,
             service::{
-                aead::SupportedAeads,
-                akcipher::SupportedAkCiphers,
-                sym::*,
-                hash::*,
-                mac::SupportedMacs,
-                services::{CryptoServiceMap, SupportedCryptoServices},
+                aead::SupportedAeads, akcipher::{Akcipher, SupportedAkCiphers, VirtioCryptoRsaSessionPara}, hash::*, mac::SupportedMacs, services::{CryptoServiceMap, SupportedCryptoServices}, sym::*
             },
         },
         VirtioDeviceError,
@@ -148,6 +143,11 @@ impl CryptoDevice {
         let encrypt_then_hash_result = ChainAlg::encrypt_then_hash(&device, VIRTIO_CRYPTO_HASH_MD5, &cipher_key, &iv, &data);
         early_println!("Result for encrypt then hash: ");
         early_println!("{:?}", encrypt_then_hash_result);
+
+        // akcipher_key需要修改以满足rsa算法的要求
+        // 否则直接调用该方法会使device返回Err
+        // let akcipher_key = [0 as u8; 16];
+        // Akcipher::create_session_rsa(&device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_RAW_PADDING, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_NO_HASH, Akcipher::PUBLIC, &akcipher_key);
 
         Ok(())
     }
