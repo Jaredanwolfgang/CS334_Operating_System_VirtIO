@@ -1,6 +1,4 @@
 use core::hint::spin_loop;
-// use core::simd::u8x16;
-// use core::slice::SlicePattern;
 
 use alloc::vec;
 use bitflags::bitflags;
