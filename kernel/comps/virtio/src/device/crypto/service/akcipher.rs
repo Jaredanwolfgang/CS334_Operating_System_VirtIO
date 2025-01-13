@@ -4,7 +4,7 @@ use bitflags::bitflags;
 use alloc::vec;
 use alloc::vec::Vec;
 use ostd::{early_println, mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo}, Pod};
-use crate::{alloc::string::ToString, device::crypto::{device::CryptoDevice, header::{VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf, VirtioCryptoDestroySessionInput, VirtioCryptoOpCtrlReqFlf}}};
+use crate::{alloc::string::ToString, device::crypto::{self, device::CryptoDevice, header::{VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf, VirtioCryptoDestroySessionInput, VirtioCryptoInhdr, VirtioCryptoOpCtrlReqFlf, VirtioCryptoOpDataReq, VirtioCryptoOpHeader, VIRTIO_CRYPTO_AKCIPHER_DECRYPT, VIRTIO_CRYPTO_AKCIPHER_ENCRYPT, VIRTIO_CRYPTO_AKCIPHER_SIGN, VIRTIO_CRYPTO_AKCIPHER_VERIFY}}};
 use alloc::string::String;
 
 use super::services::VIRTIO_CRYPTO_SERVICE_AKCIPHER;
@@ -48,6 +48,11 @@ pub struct Akcipher {
 impl Akcipher {
     pub const PUBLIC: u32 = 1;
     pub const PRIVATE: u32 = 2;
+
+    pub const ENCRYPT: u32 = 1;
+    pub const DECRYPT: u32 = 2;
+    pub const SIGN: u32 = 3;
+    pub const VERIFY: u32 = 4;
 
     pub fn create_session_rsa(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, key: &[u8]) -> u64 {
         let req_flf_slice = {
@@ -212,6 +217,90 @@ impl Akcipher {
         let resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
     }
+
+    pub fn encrypt_or_decrypt_or_sign_or_verify(device: &CryptoDevice, session_id: u64, algo: u32, op: u32, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+        let req_slice_flf = {
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
+            let opcode = match op {
+                Self::ENCRYPT => VIRTIO_CRYPTO_AKCIPHER_ENCRYPT,
+                Self::DECRYPT => VIRTIO_CRYPTO_AKCIPHER_DECRYPT,
+                Self::SIGN => VIRTIO_CRYPTO_AKCIPHER_SIGN,
+                Self::VERIFY => VIRTIO_CRYPTO_AKCIPHER_VERIFY,
+                _ => panic!("invalid para: op"),
+            };
+            let header = VirtioCryptoOpHeader {
+                opcode,
+                algo,
+                session_id,
+                flag: 0,
+                padding: 0,
+            };
+
+            let akcipher_data_flf = {
+                let akcipher_data_flf = VirtioCryptoAkcipherDataFlf {
+                    src_data_len: src_data.len() as u32,
+                    dst_data_len: dst_data_len,
+                };
+                akcipher_data_flf.pad_to_48()
+            };
+
+            let data_req_flf = VirtioCryptoOpDataReq {
+                header, 
+                op_flf: akcipher_data_flf
+            };
+
+            req_slice.write_val(0, &data_req_flf).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+
+        let variable_length_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
+        };
+
+        let dst_data = vec![0; dst_data_len as usize];
+        let inhdr = VirtioCryptoInhdr::default();
+
+        let req_slice_vlf = {
+            let req_slice_vlf = DmaStreamSlice::new(&variable_length_data_stream, 0, src_data.len());
+            req_slice_vlf.write_bytes(0, src_data.as_slice()).unwrap();
+            req_slice_vlf.sync().unwrap();
+            req_slice_vlf
+        };
+
+        let resp_slice = {
+            let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
+            let resp_slice = DmaStreamSlice::new(&variable_length_data_stream, src_data.len(), combined_resp.len());
+            resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
+            resp_slice.sync().unwrap();
+            resp_slice
+        };
+
+        let req_slice_vec = vec![&req_slice_flf, &req_slice_vlf];
+
+        let mut queue = device.dataqs[0].disable_irq().lock();
+        let token = queue.add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice]).expect("add queue failed");
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+        
+        resp_slice.sync().unwrap();
+        let mut binding = vec![0 as u8; dst_data_len as usize];
+        let dst_data = binding.as_mut_slice();
+        resp_slice.read_bytes(0, dst_data).unwrap();
+        early_println!("Data: {:X?}", dst_data);
+        dst_data.to_vec()
+    }
 }
 
 #[repr(C)]
@@ -277,5 +366,23 @@ impl VirtioCryptoEcdsaSessionPara {
     pub const VIRTIO_CRYPTO_CURVE_NIST_P256: u32 = 3;
     pub const VIRTIO_CRYPTO_CURVE_NIST_P384: u32 = 4;
     pub const VIRTIO_CRYPTO_CURVE_NIST_P521: u32 = 5;
+}
+
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct VirtioCryptoAkcipherDataFlf {
+    src_data_len: u32,
+    dst_data_len: u32,
+}
+
+impl VirtioCryptoAkcipherDataFlf {
+    pub const SIZE: usize = size_of::<Self>();
+    pub fn pad_to_48(&self) -> [u8; 48] {
+        let mut dst = [0; 48];
+        let len = Self::SIZE;
+        dst[..len].copy_from_slice(&self.as_bytes()[..len]);
+        dst
+    }
 }
 
