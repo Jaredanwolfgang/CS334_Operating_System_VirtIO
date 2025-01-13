@@ -21,7 +21,6 @@ use crate::device::crypto::header::VirtioCryptoOpCtrlReqFlf;
 use crate::device::crypto::header::VirtioCryptoOpDataReq;
 use crate::device::crypto::header::VirtioCryptoOpHeader;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DECRYPT;
-use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION;
 use crate::device::crypto::header::VIRTIO_CRYPTO_CIPHER_ENCRYPT;
 use alloc::string::String;
 
@@ -226,7 +225,7 @@ impl Cipher {
         };
         
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoDestroySessionInput::SIZE);
             resp_slice
                 .write_val(0, &VirtioCryptoDestroySessionInput::default())
                 .unwrap();
@@ -340,7 +339,8 @@ impl Cipher {
         queue.pop_used_with_token(token).expect("pop used failed");
 
         output_slice.sync().unwrap();
-        let result = &mut [0u8; 32];
+        let mut binding = vec![0 as u8; dst_data_len as usize];
+        let result = binding.as_mut_slice();
         output_slice.read_bytes(0, result).unwrap();
         // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
         early_println!("Data: {:X?}", result);
