@@ -57,7 +57,11 @@ impl Akcipher {
     pub fn create_session_rsa(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, key: &[u8]) -> u64 {
         let req_flf_slice = {
             let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
-            let header = VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_AKCIPHER, VIRTIO_CRYPTO_AKCIPHER_RSA, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION);
+            let header = VirtioCryptoCtrlHeader::new(
+                VIRTIO_CRYPTO_SERVICE_AKCIPHER, 
+                VIRTIO_CRYPTO_AKCIPHER_RSA, 
+                VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION
+            );
             let op_flf = {
                 let key_type = match public_or_private {
                     Self::PUBLIC => VirtioCryptoAkcipherCreateSessionFlf::VIRTIO_CRYPTO_AKCIPHER_KEY_TYPE_PUBLIC,
@@ -69,8 +73,12 @@ impl Akcipher {
                     padding_algo,
                     hash_algo,
                 };
-
-                VirtioCryptoAkcipherCreateSessionFlf::new(VIRTIO_CRYPTO_AKCIPHER_RSA, key_type, key.len() as u32, rsa_session_para.as_bytes())
+                VirtioCryptoAkcipherCreateSessionFlf::new(
+                    VIRTIO_CRYPTO_AKCIPHER_RSA, 
+                    key_type, 
+                    key.len() as u32, 
+                    rsa_session_para.as_bytes()
+                )
             };
 
             let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
@@ -239,7 +247,7 @@ impl Akcipher {
             let akcipher_data_flf = {
                 let akcipher_data_flf = VirtioCryptoAkcipherDataFlf {
                     src_data_len: src_data.len() as u32,
-                    dst_data_len: dst_data_len,
+                    dst_data_len,
                 };
                 akcipher_data_flf.pad_to_48()
             };
@@ -312,7 +320,7 @@ impl Akcipher {
     
     pub fn akcipher(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, akcipher_key: &Vec<u8>, algo: u32, op: u32, src_data: &Vec<u8>) -> Vec<u8> {
         let session_id = Akcipher::create_session_rsa(&device, padding_algo, hash_algo, public_or_private, &akcipher_key);
-        let dst_data = Akcipher::encrypt_or_decrypt_or_sign_or_verify(&device, session_id, algo, op, src_data, src_data.len() as u32);
+        let dst_data = Akcipher::encrypt_or_decrypt_or_sign_or_verify(&device, session_id, algo, op, src_data, 256);
         Akcipher::destroy_session(&device, session_id);
         dst_data
     }
@@ -356,16 +364,16 @@ impl VirtioCryptoRsaSessionPara {
     pub const VIRTIO_CRYPTO_RSA_RAW_PADDING: u32 = 0;
     pub const VIRTIO_CRYPTO_RSA_PKCS1_PADDING: u32 = 1;
 
-    pub const VIRTIO_CRYPTO_RSA_NO_HASH: u32 = 0;
-    pub const VIRTIO_CRYPTO_RSA_MD2: u32 = 1;
-    pub const VIRTIO_CRYPTO_RSA_MD3: u32 = 2;
-    pub const VIRTIO_CRYPTO_RSA_MD4: u32 = 3;
+    pub const VIRTIO_CRYPTO_RSA_NO_HASH: u32 = 0; // Only supported in RAW PADDING mode [ignored]
+    pub const VIRTIO_CRYPTO_RSA_MD2: u32 = 1; // [unsupported]
+    pub const VIRTIO_CRYPTO_RSA_MD3: u32 = 2; // [unsupported]
+    pub const VIRTIO_CRYPTO_RSA_MD4: u32 = 3; // [unsupported]
     pub const VIRTIO_CRYPTO_RSA_MD5: u32 = 4;
     pub const VIRTIO_CRYPTO_RSA_SHA1: u32 = 5;
     pub const VIRTIO_CRYPTO_RSA_SHA256: u32 = 6;
-    pub const VIRTIO_CRYPTO_RSA_SHA384: u32 = 7;
+    pub const VIRTIO_CRYPTO_RSA_SHA384: u32 = 7; // [unsupported]
     pub const VIRTIO_CRYPTO_RSA_SHA512: u32 = 8;
-    pub const VIRTIO_CRYPTO_RSA_SHA224: u32 = 9;
+    pub const VIRTIO_CRYPTO_RSA_SHA224: u32 = 9; // [unsupported]
 }
 
 #[repr(C)]

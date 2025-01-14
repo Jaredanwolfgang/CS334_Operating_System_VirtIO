@@ -24,3 +24,6 @@ virtio-net.pcap
 
 # benchmark results
 /result_*.json
+
+# gen_akcipher
+/gen_akcipher/target
