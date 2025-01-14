@@ -14,9 +14,9 @@ The current TODO list is as follows:
         - [ ] MAC Algorithm
             - [ ] Encryption
             - [ ] Decryption
-- [ ] AKCIPHER Algorithm
-    - [ ] Encryption
-    - [ ] Decryption
-    - [ ] Sign
-    - [ ] Verify
+- [x] AKCIPHER Algorithm
+    - [x] Encryption
+    - [x] Decryption
+    - [x] Sign
+    - [x] Verify
 - [ ] Writing Test Cases

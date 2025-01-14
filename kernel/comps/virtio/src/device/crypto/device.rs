@@ -1,26 +1,17 @@
+use core::usize;
+
 use alloc::{sync::Arc, vec::Vec};
-use aster_bigtcp::device;
-use typeflags_util::assert;
-use core::{hint::spin_loop, mem::size_of};
-use log::debug;
 use id_alloc::IdAlloc;
 use alloc::vec;
 use ostd::{
-    early_println,
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
-    sync::SpinLock,
-    Pod,
-    mm::VmIo
+    early_println, mm::{DmaDirection, DmaStream, FrameAllocOptions}, sync::SpinLock, Pod
 };
-use super::{config::{CryptoFeatures, VirtioCryptoConfig}, service::services::VIRTIO_CRYPTO_SERVICE_CIPHER};
+use super::config::{CryptoFeatures, VirtioCryptoConfig};
 use crate::{
     device::{
-        crypto::{
-            header::*,
-            service::{
-                aead::SupportedAeads, akcipher::{Akcipher, SupportedAkCiphers, VirtioCryptoRsaSessionPara}, hash::*, mac::SupportedMacs, services::{CryptoServiceMap, SupportedCryptoServices}, sym::*
+        crypto::service::{
+                services::CryptoServiceMap, sym::*
             },
-        },
         VirtioDeviceError,
     },
     queue::VirtQueue,
@@ -32,20 +23,21 @@ pub struct CryptoDevice {
     pub config_manager: ConfigManager<VirtioCryptoConfig>,
     pub request_buffer: DmaStream,
     pub response_buffer: DmaStream,
+    pub request_buffer_allocator: SpinLock<SliceAllocator>,
+    pub response_buffer_allocator: SpinLock<SliceAllocator>,
     pub dataqs: Vec<SpinLock<VirtQueue>>,
     pub controlq: SpinLock<VirtQueue>,
     pub transport: SpinLock<Box<dyn VirtioTransport>>,
-    pub id_allocator: SpinLock<IdAlloc>,
     pub supported_crypto_services: CryptoServiceMap,
 }
 
 impl CryptoDevice {
     pub fn negotiate_features(features: u64) -> u64 {
-        // TODO: 根据设备要求进行功能选择
-
-        early_println!("negotiating features: {:#x}", features);
-
+        // early_println!("negotiating features: {:#x}", features);
         let mut support_features = CryptoFeatures::from_bits_truncate(features);
+
+        // 实现REVISION_1后将该行删去即可
+        support_features.remove(CryptoFeatures::VIRTIO_CRYPTO_F_REVISION_1);
 
         if (support_features & CryptoFeatures::VIRTIO_CRYPTO_F_REVISION_1).bits() == 0 {
             support_features.remove(CryptoFeatures::VIRTIO_CRYPTO_F_CIPHER_STATELESS_MODE);
@@ -67,14 +59,13 @@ impl CryptoDevice {
         // 创建数据队列 (dataq)
         let mut dataqs = Vec::with_capacity(config.max_dataqueues as usize);
 
-        // TODO: DATAQ_SIZE未知，暂且设置为2
-        const DATAQ_SIZE: u16 = 64;
+        // DATAQ_SIZE设置为128
+        const DATAQ_SIZE: u16 = 128;
 
         // 根据白皮书2.6节的定义，max_dataqueues的数据内容不应超过u16
         let max_dataqueues = config.max_dataqueues;
         if max_dataqueues > u16::MAX as u32 {
             // max_dataqueues的数据范围不符合规范
-            // TODO: 可能需要重启设备
             panic!("config.max_dataqueues out of bound.");
         }
 
@@ -87,7 +78,7 @@ impl CryptoDevice {
             dataqs.push(dataq);
         }
 
-        // TODO: CONTROLQ_SIZE未知，暂且设置为2
+        // CONTROLQ_SIZE设置为128
         const CONTROLQ_SIZE: u16 = 128;
         // 同上，强行转换为u16
         let controlq_index: u16 = max_dataqueues as u16;
@@ -105,15 +96,22 @@ impl CryptoDevice {
             DmaStream::map(vm_segment, DmaDirection::Bidirectional, false).unwrap()
         };
 
+        let request_buffer_size = request_buffer.nbytes();
+        let response_buffer_size = response_buffer.nbytes();
+
+        let request_buffer_allocator = SliceAllocator::new(request_buffer_size, 8);
+        let response_buffer_allocator = SliceAllocator::new(response_buffer_size, 8);
+
         // 创建设备实例
         let device = Arc::new(Self {
             config_manager,
             request_buffer,
             response_buffer,
+            request_buffer_allocator: SpinLock::new(request_buffer_allocator),
+            response_buffer_allocator: SpinLock::new(response_buffer_allocator),
             dataqs,
             controlq,
             transport: SpinLock::new(transport),
-            id_allocator: SpinLock::new(IdAlloc::with_capacity(64)),
             supported_crypto_services: CryptoServiceMap::new(config),
         });
 
@@ -135,26 +133,27 @@ impl CryptoDevice {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         ];
         
-        // let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
-        // let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
+        let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data);
+        let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
 
-        // assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
+        assert_eq!(data, decrypted_data, "The initial data and decrypted data of CIPHER are inconsistent");
 
-        let mut chain_alg = ChainAlg::new(
-            ChainAlg::ENCRYPT,
-            VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH,
-            VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN,
-            VIRTIO_CRYPTO_HASH_SHA1,
-            VIRTIO_CRYPTO_CIPHER_AES_CBC,
-        );
-        let encrypt_then_hash_result = chain_alg.encrypt_then_hash(&device, &cipher_key, &[], &iv, &data);
-        early_println!("Result for encrypt then hash: ");
-        early_println!("{:?}", encrypt_then_hash_result);
+        // let mut chain_alg = ChainAlg::new(
+        //     ChainAlg::ENCRYPT,
+        //     VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH,
+        //     VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN,
+        //     VIRTIO_CRYPTO_HASH_SHA1,
+        //     VIRTIO_CRYPTO_CIPHER_AES_CBC,
+        // );
+        // let encrypt_then_hash_result = chain_alg.encrypt_then_hash(&device, &cipher_key, &[], &iv, &data);
+        // early_println!("Result for encrypt then hash: ");
+        // early_println!("{:?}", encrypt_then_hash_result);
 
         // akcipher_key需要修改以满足rsa算法的要求
         // 否则直接调用该方法会使device返回Err
         // let akcipher_key = [0 as u8; 16];
         // Akcipher::create_session_rsa(&device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_RAW_PADDING, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_NO_HASH, Akcipher::PUBLIC, &akcipher_key);
+
 
         Ok(())
     }
@@ -219,9 +218,129 @@ impl CryptoDevice {
     }
 }
 
-fn slice_to_padded_array(slice: &[u8]) -> [u8; 56] {
-    let mut array = [0u8; 56]; // Initialize with zeroes
-    let len = slice.len().min(56); // Ensure we don't exceed 56
-    array[..len].copy_from_slice(&slice[..len]); // Copy the slice into the array
-    array
+pub struct SliceAllocator {
+    stream_size: usize,
+    id_allocator: SpinLock<IdAlloc>,
+    space_slices: Vec<SpaceSlice>,
+}
+
+impl SliceAllocator {
+    pub fn new(stream_size: usize, id_capacity: usize) -> Self {
+        SliceAllocator {
+            stream_size,
+            id_allocator: SpinLock::new(IdAlloc::with_capacity(id_capacity)),
+            space_slices: {
+                let mut space_slices = Vec::new();
+                space_slices.push(SpaceSlice { head: 0, tail: stream_size,});
+                space_slices
+            },
+        }
+    }
+
+    pub fn allocate(&mut self, size: usize) -> Result<SliceRecord, &'static str> {
+        let len = self.space_slices.len();
+        let mut slice_record = SliceRecord {
+            id: 0,
+            head: 0,
+            tail: 0,
+        };
+        let mut allocated = false;
+        for i in 0..len {
+            let head = self.space_slices[i].head;
+            let tail = self.space_slices[i].tail;
+            if tail - head >= size {
+                slice_record.head = head;
+                slice_record.tail = head + size;
+                let _ = &mut self.space_slices.remove(i);
+                if slice_record.tail != tail {
+                    self.space_slices.insert(i, SpaceSlice::new(slice_record.tail, tail));
+                }
+                allocated = true;
+                slice_record.id = self.id_allocator.disable_irq().lock().alloc().unwrap();
+                break;
+            }
+        }
+
+        match allocated {
+            true => Ok(slice_record),
+            false => Err("no enough space"),
+        }
+    }
+
+    fn deallocate(&mut self, slice_record: &SliceRecord) {
+        let len: i32 = self.space_slices.len() as i32;
+        for j in 0..(len + 1) {
+            let i = j - 1;
+
+            let prev_tail = match i {
+                -1 => 0,
+                _ => self.space_slices[i as usize].tail,
+            };
+
+            let next_head = {
+                if i == len {
+                    usize::MAX
+                } else {
+                    self.space_slices[(i+1) as usize].head
+                }
+            };
+
+            if slice_record.head >= prev_tail && slice_record.head <= next_head {
+                if slice_record.head == prev_tail && slice_record.tail == next_head && i != -1 && j != len {
+                    self.space_slices[i as usize].tail = self.space_slices[j as usize].tail;
+                    self.space_slices.remove(j as usize);
+                } else if slice_record.head == prev_tail && i != -1 {
+                    self.space_slices[i as usize].tail = slice_record.tail;
+                } else if slice_record.tail == next_head && j != len {
+                    self.space_slices[j as usize].head = slice_record.head;
+                } else {
+                    self.space_slices.insert(j as usize, SpaceSlice::new(slice_record.head, slice_record.tail));
+                }
+
+                break;
+            }
+            
+        }
+    }
+
+    pub fn print(&self) {
+        early_println!("--------");
+        for space_slice in &self.space_slices {
+            early_println!("{:?}", space_slice);
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub struct SliceRecord {
+    id: usize,
+    head: usize,
+    tail: usize,
+}
+
+impl SliceRecord {
+    pub fn default() -> Self {
+        Self {
+            id: 0,
+            head: 0,
+            tail: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+struct SpaceSlice {
+    head: usize,
+    tail: usize,
+}
+
+impl SpaceSlice {
+    fn new(head: usize, tail: usize) -> Self {
+        Self {
+            head,
+            tail,
+        }
+    }
 }
