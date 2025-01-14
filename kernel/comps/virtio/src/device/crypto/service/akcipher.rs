@@ -262,6 +262,14 @@ impl Akcipher {
             DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
         };
 
+        let output_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
+        };
+
         let dst_data = vec![0; dst_data_len as usize];
         let inhdr = VirtioCryptoInhdr::default();
 
@@ -274,7 +282,7 @@ impl Akcipher {
 
         let resp_slice = {
             let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
-            let resp_slice = DmaStreamSlice::new(&variable_length_data_stream, src_data.len(), combined_resp.len());
+            let resp_slice = DmaStreamSlice::new(&output_data_stream, 0, combined_resp.len());
             resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
             resp_slice.sync().unwrap();
             resp_slice
