@@ -1,10 +1,10 @@
-use core::{hint::spin_loop, panic};
+use core::{hash, hint::spin_loop, ops::Sub, panic};
 
 use bitflags::bitflags;
 use alloc::vec;
 use alloc::vec::Vec;
 use ostd::{early_println, mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo}, Pod};
-use crate::{alloc::string::ToString, device::crypto::{self, device::CryptoDevice, header::{VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf, VirtioCryptoDestroySessionInput, VirtioCryptoInhdr, VirtioCryptoOpCtrlReqFlf, VirtioCryptoOpDataReq, VirtioCryptoOpHeader, VIRTIO_CRYPTO_AKCIPHER_DECRYPT, VIRTIO_CRYPTO_AKCIPHER_ENCRYPT, VIRTIO_CRYPTO_AKCIPHER_SIGN, VIRTIO_CRYPTO_AKCIPHER_VERIFY}}};
+use crate::{alloc::string::ToString, device::crypto::{self, device::{CryptoDevice, SubmittedReq}, header::{VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf, VirtioCryptoDestroySessionInput, VirtioCryptoInhdr, VirtioCryptoOpCtrlReqFlf, VirtioCryptoOpDataReq, VirtioCryptoOpHeader, VIRTIO_CRYPTO_AKCIPHER_DECRYPT, VIRTIO_CRYPTO_AKCIPHER_ENCRYPT, VIRTIO_CRYPTO_AKCIPHER_SIGN, VIRTIO_CRYPTO_AKCIPHER_VERIFY}}};
 use alloc::string::String;
 
 use super::services::VIRTIO_CRYPTO_SERVICE_AKCIPHER;
@@ -54,9 +54,13 @@ impl Akcipher {
     pub const SIGN: u32 = 3;
     pub const VERIFY: u32 = 4;
 
-    pub fn create_session_rsa(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, key: &[u8]) -> u64 {
-        let req_flf_slice = {
-            let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+    pub fn send_create_session_rsa_request(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, key: &[u8]) -> (u32, u16) {
+        
+        let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE + key.len();
+        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
+        
+        let req_slice = {
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, req_slice_size);
             let header = VirtioCryptoCtrlHeader::new(
                 VIRTIO_CRYPTO_SERVICE_AKCIPHER, 
                 VIRTIO_CRYPTO_AKCIPHER_RSA, 
@@ -82,51 +86,49 @@ impl Akcipher {
             };
 
             let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
-            req_flf_slice.write_val(0, &req_flf).unwrap();
-            req_flf_slice.sync().unwrap();
-            req_flf_slice
+            req_slice.write_val(0, &req_flf).unwrap();
+            req_slice.write_bytes(VirtioCryptoOpCtrlReqFlf::SIZE, key).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
         };
 
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
-
-        let req_vlf_slice = {
-            let req_vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, key.len());
-            req_vlf_slice.write_bytes(0, key).unwrap();
-            req_vlf_slice
-        };
-
-        let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
+        let resp_slice_size = VirtioCryptoCreateSessionInput::SIZE;
+        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
 
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, resp_slice_size);
             resp_slice.write_val(0, &VirtioCryptoCreateSessionInput::default()).unwrap();
             resp_slice
         };
 
         let mut queue = device.controlq.disable_irq().lock();
-        let token = queue.add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice]).expect("add queue failed");
+        let token = queue.add_dma_buf(&[&req_slice], &[&resp_slice]).expect("add queue failed");
         if queue.should_notify() {
             queue.notify();
         }
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
-        resp_slice.sync().unwrap();
+
+        device.controlq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
+
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    pub fn create_session_rsa(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, key: &[u8]) -> u64 {
+        let (queue_index, token) = Self::send_create_session_rsa_request(device, padding_algo, hash_algo, public_or_private, key);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
         resp.session_id
     }
 
-    pub fn create_session_ecdsa(device: &CryptoDevice, curve_id: u32, public_or_private: u32, key: &[u8]) -> u64 {
-        let req_flf_slice = {
-            let req_flf_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+    pub fn send_create_session_ecdsa_request(device: &CryptoDevice, curve_id: u32, public_or_private: u32, key: &[u8]) -> (u32, u16) {
+
+        let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE + key.len();
+        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
+
+        let req_slice = {
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, req_slice_size);
             let header = VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_AKCIPHER, VIRTIO_CRYPTO_AKCIPHER_ECDSA, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION);
             let op_flf = {
                 let key_type = match public_or_private {
@@ -143,52 +145,50 @@ impl Akcipher {
             };
 
             let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
-            req_flf_slice.write_val(0, &req_flf).unwrap();
-            req_flf_slice.sync().unwrap();
-            req_flf_slice
+
+            req_slice.write_val(0, &req_flf).unwrap();
+            req_slice.write_bytes(VirtioCryptoOpCtrlReqFlf::SIZE, key).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
         };
 
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
-
-        let req_vlf_slice = {
-            let req_vlf_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, key.len());
-            req_vlf_slice.write_bytes(0, key).unwrap();
-            req_vlf_slice
-        };
-
-        let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
+        let resp_slice_size = VirtioCryptoCreateSessionInput::SIZE;
+        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
 
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoCreateSessionInput::SIZE);
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, resp_slice_size);
             resp_slice.write_val(0, &VirtioCryptoCreateSessionInput::default()).unwrap();
             resp_slice
         };
 
         let mut queue = device.controlq.disable_irq().lock();
-        let token = queue.add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice]).expect("add queue failed");
+        let token = queue.add_dma_buf(&[&req_slice], &[&resp_slice]).expect("add queue failed");
         if queue.should_notify() {
             queue.notify();
         }
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
-        resp_slice.sync().unwrap();
+
+        device.controlq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
+
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    pub fn create_session_ecdsa(device: &CryptoDevice, curve_id: u32, public_or_private: u32, key: &[u8]) -> u64 {
+        let (queue_index, token) = Self::send_create_session_ecdsa_request(device, curve_id, public_or_private, key);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
         resp.session_id
     }
 
-    pub fn destroy_session(device: &CryptoDevice, session_id: u64) {
+    pub fn send_destroy_session_request(device: &CryptoDevice, session_id: u64) -> (u32, u16) {
+
+        let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE;
+        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
 
         let req_slice = {
-            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, req_slice_size);
             let header = VirtioCryptoCtrlHeader::new(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0, VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION);
             let destroy_session_flf = VirtioCryptoDestroySessionFlf::new(session_id);
             let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, destroy_session_flf.as_bytes());
@@ -197,9 +197,12 @@ impl Akcipher {
             req_slice.sync().unwrap();
             req_slice
         };
+
+        let resp_slice_size = VirtioCryptoDestroySessionInput::SIZE;
+        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
         
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, 0, VirtioCryptoDestroySessionInput::SIZE);
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, resp_slice_size);
             resp_slice
                 .write_val(0, &VirtioCryptoDestroySessionInput::default())
                 .unwrap();
@@ -216,19 +219,27 @@ impl Akcipher {
             queue.notify();
         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
-        
-        resp_slice.sync().unwrap();
+        device.controlq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
+
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    fn destroy_session(device: &CryptoDevice, session_id: u64) {
+        let (queue_index, token) = Self::send_destroy_session_request(device, session_id);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
     }
 
-    pub fn encrypt_or_decrypt_or_sign_or_verify(device: &CryptoDevice, session_id: u64, algo: u32, op: u32, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
-        let req_slice_flf = {
-            let req_slice = DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
+    pub fn send_encrypt_or_decrypt_or_sign_or_verify_request(device: &CryptoDevice, session_id: u64, algo: u32, op: u32, src_data: &Vec<u8>, dst_data_len: u32) -> (u32, u16) {
+        
+        let req_slice_size = VirtioCryptoOpDataReq::SIZE + src_data.len();
+        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
+
+        let req_slice = {
+            let req_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, req_slice_size);
             let opcode = match op {
                 Self::ENCRYPT => VIRTIO_CRYPTO_AKCIPHER_ENCRYPT,
                 Self::DECRYPT => VIRTIO_CRYPTO_AKCIPHER_DECRYPT,
@@ -263,59 +274,43 @@ impl Akcipher {
             };
 
             req_slice.write_val(0, &data_req_flf).unwrap();
+            req_slice.write_bytes(VirtioCryptoOpDataReq::SIZE, &src_data.as_slice()).unwrap();
             req_slice.sync().unwrap();
             req_slice
-        };
-
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
-
-        let output_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
         };
 
         let dst_data = vec![0; dst_data_len as usize];
         let inhdr = VirtioCryptoInhdr::default();
 
-        let req_slice_vlf = {
-            let req_slice_vlf = DmaStreamSlice::new(&variable_length_data_stream, 0, src_data.len());
-            req_slice_vlf.write_bytes(0, src_data.as_slice()).unwrap();
-            req_slice_vlf.sync().unwrap();
-            req_slice_vlf
-        };
+        let resp_slice_size = dst_data.len() + VirtioCryptoInhdr::SIZE as usize;
+        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
 
         let resp_slice = {
             let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
-            let resp_slice = DmaStreamSlice::new(&output_data_stream, 0, combined_resp.len());
+            let resp_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, resp_slice_size);
             resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
             resp_slice.sync().unwrap();
             resp_slice
         };
 
-        let req_slice_vec = vec![&req_slice_flf, &req_slice_vlf];
-
         let mut queue = device.dataqs[0].disable_irq().lock();
-        let token = queue.add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice]).expect("add queue failed");
+        let token = queue.add_dma_buf(&[&req_slice], &[&resp_slice]).expect("add queue failed");
 
         if queue.should_notify() {
             queue.notify();
         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        let dst_data_len_buf = queue.pop_used_with_token(token).expect("pop used failed");
+        device.dataq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
+
+        (CryptoDevice::DATAQ, token)
+    }
+
+    pub fn encrypt_or_decrypt_or_sign_or_verify(device: &CryptoDevice, session_id: u64, algo: u32, op: u32, src_data: &Vec<u8>, dst_data_len: u32) -> Vec<u8> {
+        let (queue_index, token) = Self::send_encrypt_or_decrypt_or_sign_or_verify_request(device, session_id, algo, op, src_data, dst_data_len);
+        let (resp_slice, dst_data_len_buf) = device.get_resp_slice_from(queue_index, token);
         early_println!("dst_data_len_buf: {:?}", dst_data_len_buf);
-        
         resp_slice.sync().unwrap();
         let mut binding = vec![0 as u8; (dst_data_len_buf - 1) as usize];
         let dst_data = binding.as_mut_slice();

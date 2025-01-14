@@ -436,6 +436,7 @@ impl SliceAllocator {
                 break;
             }
         }
+        self.id_allocator.disable_irq().lock().free(slice_record.id);
     }
 
     pub fn print(&self) {
