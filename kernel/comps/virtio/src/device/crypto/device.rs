@@ -130,8 +130,7 @@ impl CryptoDevice {
         Self::test_device(device)
     }
 
-    pub fn flush_state(&self) {
-        // early_println!("try to flush");
+    pub fn refresh_state(&self) {
         loop {
             let mut queue = self.controlq.disable_irq().lock();
             let Ok((token, len)) = queue.pop_used() else {
@@ -263,7 +262,7 @@ impl CryptoDevice {
         } else {
             &self.dataq_manager
         };
-        self.flush_state();
+        self.refresh_state();
         manager.disable_irq().lock().is_finished(token)
     } 
 
@@ -275,7 +274,7 @@ impl CryptoDevice {
         };
 
         let submitted_req = {
-            self.flush_state();
+            self.refresh_state();
             let mut looping = true;
             let mut submitted_req = manager.disable_irq().lock().pop(token);
             while looping {
@@ -285,7 +284,7 @@ impl CryptoDevice {
                     }
                     Err(_) => {
                         spin_loop();
-                        self.flush_state();
+                        self.refresh_state();
                         submitted_req = manager.disable_irq().lock().pop(token);
                     }
                 }
