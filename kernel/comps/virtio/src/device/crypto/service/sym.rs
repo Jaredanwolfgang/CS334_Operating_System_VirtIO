@@ -654,7 +654,7 @@ impl ChainAlg {
                     iv_len: iv.len() as u32,
                     src_data_len: src_data.len() as u32,
                     dst_data_len,
-                    cipher_start_src_offset: 0,  // TODO_ZSL: may be wrong
+                    cipher_start_src_offset: 0,  // TODO_ZSL
                     len_to_cipher: src_data.len() as u32,
                     hash_start_src_offset: 0,
                     len_to_hash: src_data.len() as u32,
@@ -733,34 +733,13 @@ impl ChainAlg {
         result.to_vec()
     }
 
-    pub fn encrypt_then_hash(mut self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+    pub fn chaining_algorithms(mut self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
         let session_id = ChainAlg::create_session(&self, device, cipher_key, auth_key);
         self.session_id = session_id;
         let dst_data = ChainAlg::hash_or_mac(&self, device, iv, src_data, src_data.len() as u32);
         ChainAlg::destroy_session(&self, device);
         dst_data
     }
-
-    // pub fn hash_then_encrypt(mut self, device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
-    //     let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_HASH_THEN_CIPHER, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, algo, cipher_key);
-    //     let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN, iv, src_data, src_data.len() as u32);
-    //     ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN);
-    //     dst_data
-    // }
-
-    // pub fn encrypt_then_mac(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
-    //     let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_CIPHER_THEN_HASH, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, algo, cipher_key);
-    //     let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, iv, src_data, src_data.len() as u32);
-    //     ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH);
-    //     dst_data
-    // }
-
-    // pub fn mac_then_encrypt(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
-    //     let session_id = ChainAlg::create_session(device, VIRTIO_CRYPTO_SYM_ALG_CHAIN_ORDER_HASH_THEN_CIPHER, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, algo, cipher_key);
-    //     let dst_data = ChainAlg::hash_or_mac(device, algo, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH, iv, src_data, src_data.len() as u32);
-    //     ChainAlg::destroy_session(device, session_id, VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH);
-    //     dst_data
-    // }
 }
 
 
@@ -837,6 +816,7 @@ struct virtio_crypto_cipher_data_vlf {
     u8 dst_data[dst_data_len]; 
 };
 */
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoCipherDataFlf {
@@ -887,6 +867,7 @@ struct virtio_crypto_alg_chain_data_vlf {
     u8 hash_result[hash_result_len]; 
 };
 */
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoAlgChainDataFlf {

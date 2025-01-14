@@ -9,9 +9,9 @@ use alloc::string::String;
 
 use super::services::VIRTIO_CRYPTO_SERVICE_AKCIPHER;
 
-const VIRTIO_CRYPTO_NO_AKCIPHER: u32 = 0;
-const VIRTIO_CRYPTO_AKCIPHER_RSA: u32 = 1;
-const VIRTIO_CRYPTO_AKCIPHER_ECDSA: u32 = 2;
+pub const VIRTIO_CRYPTO_NO_AKCIPHER: u32 = 0;
+pub const VIRTIO_CRYPTO_AKCIPHER_RSA: u32 = 1;
+pub const VIRTIO_CRYPTO_AKCIPHER_ECDSA: u32 = 2;
 
 bitflags! {
     pub struct SupportedAkCiphers: u32 {
@@ -262,6 +262,14 @@ impl Akcipher {
             DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
         };
 
+        let output_data_stream = {
+            let segment = FrameAllocOptions::new(1)
+                .uninit(true)
+                .alloc_contiguous()
+                .unwrap();
+            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
+        };
+
         let dst_data = vec![0; dst_data_len as usize];
         let inhdr = VirtioCryptoInhdr::default();
 
@@ -274,7 +282,7 @@ impl Akcipher {
 
         let resp_slice = {
             let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
-            let resp_slice = DmaStreamSlice::new(&variable_length_data_stream, src_data.len(), combined_resp.len());
+            let resp_slice = DmaStreamSlice::new(&output_data_stream, 0, combined_resp.len());
             resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
             resp_slice.sync().unwrap();
             resp_slice
@@ -300,6 +308,13 @@ impl Akcipher {
         resp_slice.read_bytes(0, dst_data).unwrap();
         early_println!("Data: {:X?}", dst_data);
         dst_data.to_vec()
+    }
+    
+    pub fn akcipher(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, akcipher_key: &Vec<u8>, algo: u32, op: u32, src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = Akcipher::create_session_rsa(&device, padding_algo, hash_algo, public_or_private, &akcipher_key);
+        let dst_data = Akcipher::encrypt_or_decrypt_or_sign_or_verify(&device, session_id, algo, op, src_data, src_data.len() as u32);
+        Akcipher::destroy_session(&device, session_id);
+        dst_data
     }
 }
 
