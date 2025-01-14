@@ -308,10 +308,11 @@ impl Akcipher {
         while !queue.can_pop() {
             spin_loop();
         }
-        queue.pop_used_with_token(token).expect("pop used failed");
+        let dst_data_len_buf = queue.pop_used_with_token(token).expect("pop used failed");
+        early_println!("dst_data_len_buf: {:?}", dst_data_len_buf);
         
         resp_slice.sync().unwrap();
-        let mut binding = vec![0 as u8; dst_data_len as usize];
+        let mut binding = vec![0 as u8; (dst_data_len_buf - 1) as usize];
         let dst_data = binding.as_mut_slice();
         resp_slice.read_bytes(0, dst_data).unwrap();
         early_println!("Data: {:X?}", dst_data);
@@ -320,7 +321,14 @@ impl Akcipher {
     
     pub fn akcipher(device: &CryptoDevice, padding_algo: u32, hash_algo: u32, public_or_private: u32, akcipher_key: &Vec<u8>, algo: u32, op: u32, src_data: &Vec<u8>) -> Vec<u8> {
         let session_id = Akcipher::create_session_rsa(&device, padding_algo, hash_algo, public_or_private, &akcipher_key);
-        let dst_data = Akcipher::encrypt_or_decrypt_or_sign_or_verify(&device, session_id, algo, op, src_data, 256);
+        let dst_data_len: u32 = match hash_algo {
+            VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_MD5 => 128,
+            VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_SHA1 => 160,
+            VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_SHA256 => 256,
+            VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_SHA512 => 512,
+            _ => panic!("Unsupported hash algorithm."),
+        };
+        let dst_data = Akcipher::encrypt_or_decrypt_or_sign_or_verify(&device, session_id, algo, op, src_data, dst_data_len);
         Akcipher::destroy_session(&device, session_id);
         dst_data
     }
