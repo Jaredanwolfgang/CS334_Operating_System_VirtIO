@@ -41,4 +41,9 @@ pub enum IoctlCmd {
     TIOCGPTPEER = 0x40045441,
     /// Get tdx report using TDCALL
     TDXGETREPORT = 0xc4405401,
+
+    /// Test Encrypt
+    CIOCCRYPT = 0x20006401,
+    /// Test Decrypt
+    CIOCXCRYPT = 0x20006402,
 }
