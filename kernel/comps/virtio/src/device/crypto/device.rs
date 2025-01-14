@@ -1,20 +1,25 @@
-use core::usize;
+use alloc::{sync::Arc, vec, vec::Vec};
+use core::{hint::spin_loop, usize};
 
-use alloc::{sync::Arc, vec::Vec};
 use id_alloc::IdAlloc;
-use alloc::vec;
 use ostd::{
-    early_println, mm::{DmaDirection, DmaStream, FrameAllocOptions}, sync::SpinLock, Pod
+    early_println,
+    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
+    sync::SpinLock,
+    Pod,
 };
+
 use super::config::{CryptoFeatures, VirtioCryptoConfig};
 use crate::{
     device::{
         crypto::service::{
-                akcipher::{Akcipher, VirtioCryptoRsaSessionPara, VIRTIO_CRYPTO_AKCIPHER_RSA}, services::CryptoServiceMap, sym::*
-            },
+            akcipher::{Akcipher, VirtioCryptoRsaSessionPara, VIRTIO_CRYPTO_AKCIPHER_RSA},
+            services::CryptoServiceMap,
+            sym::*,
+        },
         VirtioDeviceError,
     },
-    queue::VirtQueue,
+    queue::{self, VirtQueue},
     transport::ConfigManager,
     Box, VirtioTransport,
 };
@@ -25,6 +30,8 @@ pub struct CryptoDevice {
     pub response_buffer: DmaStream,
     pub request_buffer_allocator: SpinLock<SliceAllocator>,
     pub response_buffer_allocator: SpinLock<SliceAllocator>,
+    pub controlq_manager: SpinLock<SubmittedReqManager>,
+    pub dataq_manager: SpinLock<SubmittedReqManager>,
     pub dataqs: Vec<SpinLock<VirtQueue>>,
     pub controlq: SpinLock<VirtQueue>,
     pub transport: SpinLock<Box<dyn VirtioTransport>>,
@@ -109,34 +116,53 @@ impl CryptoDevice {
             response_buffer,
             request_buffer_allocator: SpinLock::new(request_buffer_allocator),
             response_buffer_allocator: SpinLock::new(response_buffer_allocator),
+            controlq_manager: SpinLock::new(SubmittedReqManager::new()),
+            dataq_manager: SpinLock::new(SubmittedReqManager::new()),
             dataqs,
             controlq,
             transport: SpinLock::new(transport),
             supported_crypto_services: CryptoServiceMap::new(config),
         });
 
-        // 完成设备初始化
         device.transport.lock().finish_init();
 
         device.print_supported_crypto_algorithms();
         Self::test_device(device)
     }
 
+    pub fn flush_state(&self) {
+        // early_println!("try to flush");
+        loop {
+            let mut queue = self.controlq.disable_irq().lock();
+            let Ok((token, len)) = queue.pop_used() else {
+                break;
+            };
+            early_println!("request in controlq with token: {} has finished", token);
+            self.controlq_manager.disable_irq().lock().finish(token, len);
+        }
+        loop {
+            let mut queue = self.dataqs[0].lock();
+            let Ok((token, len)) = queue.pop_used() else {
+                break;
+            };
+            early_println!("request in dataq with token: {} has finished", token);
+            self.dataq_manager.disable_irq().lock().finish(token, len);
+        }
+    }
+
     pub fn test_device(device: Arc<CryptoDevice>) -> Result<(), VirtioDeviceError> {
         let cipher_key = [0 as u8; 16];
         let iv = vec![0x00; 16];
-        // let src_data = vec![
-        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
-        // ];
+
         let data1: Vec<u8> = vec![
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ];
-        let data2: Vec<u8> = vec![
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D
-        ];
-        
+        // let data2: Vec<u8> = vec![
+        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D
+        // ];
+
         let encrypted_data = Cipher::encrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &data1);
         let decrypted_data = Cipher::decrypt(&device, VIRTIO_CRYPTO_CIPHER_AES_CBC, &cipher_key, &iv, &encrypted_data);
 
@@ -158,14 +184,13 @@ impl CryptoDevice {
         // 否则直接调用该方法会使device返回Err
         // [Fail] let akcipher_key = vec![48, 130, 2, 34, 48, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 3, 130, 2, 15, 0, 48, 130, 2, 10, 2, 130, 2, 1, 0, 196, 188, 24, 75, 124, 246, 117, 46, 227, 245, 55, 148, 204, 252, 111, 70, 114, 212, 251, 97, 70, 231, 127, 4, 67, 250, 202, 131, 161, 108, 17, 59, 193, 26, 188, 172, 179, 202, 91, 120, 82, 177, 105, 199, 251, 246, 7, 200, 169, 132, 223, 94, 111, 49, 214, 142, 98, 30, 58, 44, 139, 100, 26, 68, 244, 248, 248, 53, 150, 202, 237, 167, 106, 38, 242, 54, 246, 91, 168, 118, 175, 72, 208, 0, 201, 135, 157, 53, 221, 97, 37, 216, 71, 246, 66, 24, 68, 75, 7, 150, 201, 114, 220, 94, 131, 17, 213, 236, 200, 239, 90, 4, 128, 95, 184, 40, 127, 78, 47, 16, 124, 225, 225, 160, 120, 92, 141, 33, 118, 175, 84, 104, 206, 230, 160, 188, 29, 201, 26, 76, 136, 34, 51, 49, 245, 82, 194, 237, 204, 202, 173, 38, 129, 30, 203, 214, 222, 75, 183, 212, 184, 204, 63, 83, 27, 225, 187, 94, 114, 226, 243, 196, 238, 138, 87, 66, 154, 109, 33, 243, 184, 192, 214, 148, 164, 124, 53, 194, 165, 91, 116, 105, 84, 80, 198, 208, 89, 231, 143, 86, 36, 163, 112, 6, 76, 38, 18, 58, 171, 245, 36, 129, 14, 30, 203, 157, 8, 104, 81, 189, 209, 126, 80, 3, 128, 183, 250, 106, 249, 190, 207, 53, 159, 89, 41, 171, 81, 92, 88, 148, 224, 227, 76, 235, 177, 19, 3, 116, 233, 59, 102, 174, 177, 204, 192, 147, 71, 127, 230, 81, 234, 100, 206, 255, 240, 67, 104, 12, 85, 116, 7, 9, 201, 251, 225, 158, 143, 231, 196, 82, 93, 173, 236, 38, 225, 183, 81, 45, 145, 75, 89, 21, 186, 134, 187, 179, 165, 31, 65, 162, 16, 208, 228, 186, 124, 63, 202, 68, 170, 140, 146, 170, 242, 197, 40, 39, 210, 205, 54, 146, 181, 29, 219, 6, 81, 158, 244, 183, 84, 234, 2, 132, 11, 22, 10, 104, 220, 197, 228, 234, 180, 242, 139, 149, 35, 18, 49, 58, 204, 11, 201, 130, 238, 157, 20, 203, 139, 190, 189, 234, 180, 219, 133, 228, 244, 65, 199, 167, 224, 84, 155, 8, 143, 139, 38, 197, 203, 18, 186, 23, 226, 196, 139, 219, 78, 101, 246, 19, 155, 146, 197, 212, 66, 81, 132, 146, 31, 5, 244, 133, 250, 182, 148, 204, 178, 51, 91, 52, 3, 8, 48, 108, 107, 33, 7, 23, 65, 44, 81, 72, 160, 95, 218, 100, 18, 10, 210, 179, 75, 75, 89, 34, 74, 120, 94, 159, 110, 42, 128, 33, 116, 145, 118, 103, 161, 132, 232, 161, 18, 157, 136, 227, 88, 129, 86, 171, 56, 159, 169, 235, 200, 57, 54, 252, 193, 48, 107, 146, 228, 44, 209, 198, 174, 100, 107, 159, 139, 66, 1, 0, 138, 23, 252, 106, 111, 120, 198, 31, 35, 157, 91, 60, 102, 7, 165, 240, 89, 29, 176, 16, 249, 207, 99, 117, 124, 81, 98, 113, 103, 187, 60, 3, 2, 3, 1, 0, 1];
         // [Fail] let akcipher_key = vec![48, 130, 2, 34, 2, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 3, 130, 2, 15, 0, 48, 130, 2, 10, 2, 130, 2, 1, 0, 196, 188, 24, 75, 124, 246, 117, 46, 227, 245, 55, 148, 204, 252, 111, 70, 114, 212, 251, 97, 70, 231, 127, 4, 67, 250, 202, 131, 161, 108, 17, 59, 193, 26, 188, 172, 179, 202, 91, 120, 82, 177, 105, 199, 251, 246, 7, 200, 169, 132, 223, 94, 111, 49, 214, 142, 98, 30, 58, 44, 139, 100, 26, 68, 244, 248, 248, 53, 150, 202, 237, 167, 106, 38, 242, 54, 246, 91, 168, 118, 175, 72, 208, 0, 201, 135, 157, 53, 221, 97, 37, 216, 71, 246, 66, 24, 68, 75, 7, 150, 201, 114, 220, 94, 131, 17, 213, 236, 200, 239, 90, 4, 128, 95, 184, 40, 127, 78, 47, 16, 124, 225, 225, 160, 120, 92, 141, 33, 118, 175, 84, 104, 206, 230, 160, 188, 29, 201, 26, 76, 136, 34, 51, 49, 245, 82, 194, 237, 204, 202, 173, 38, 129, 30, 203, 214, 222, 75, 183, 212, 184, 204, 63, 83, 27, 225, 187, 94, 114, 226, 243, 196, 238, 138, 87, 66, 154, 109, 33, 243, 184, 192, 214, 148, 164, 124, 53, 194, 165, 91, 116, 105, 84, 80, 198, 208, 89, 231, 143, 86, 36, 163, 112, 6, 76, 38, 18, 58, 171, 245, 36, 129, 14, 30, 203, 157, 8, 104, 81, 189, 209, 126, 80, 3, 128, 183, 250, 106, 249, 190, 207, 53, 159, 89, 41, 171, 81, 92, 88, 148, 224, 227, 76, 235, 177, 19, 3, 116, 233, 59, 102, 174, 177, 204, 192, 147, 71, 127, 230, 81, 234, 100, 206, 255, 240, 67, 104, 12, 85, 116, 7, 9, 201, 251, 225, 158, 143, 231, 196, 82, 93, 173, 236, 38, 225, 183, 81, 45, 145, 75, 89, 21, 186, 134, 187, 179, 165, 31, 65, 162, 16, 208, 228, 186, 124, 63, 202, 68, 170, 140, 146, 170, 242, 197, 40, 39, 210, 205, 54, 146, 181, 29, 219, 6, 81, 158, 244, 183, 84, 234, 2, 132, 11, 22, 10, 104, 220, 197, 228, 234, 180, 242, 139, 149, 35, 18, 49, 58, 204, 11, 201, 130, 238, 157, 20, 203, 139, 190, 189, 234, 180, 219, 133, 228, 244, 65, 199, 167, 224, 84, 155, 8, 143, 139, 38, 197, 203, 18, 186, 23, 226, 196, 139, 219, 78, 101, 246, 19, 155, 146, 197, 212, 66, 81, 132, 146, 31, 5, 244, 133, 250, 182, 148, 204, 178, 51, 91, 52, 3, 8, 48, 108, 107, 33, 7, 23, 65, 44, 81, 72, 160, 95, 218, 100, 18, 10, 210, 179, 75, 75, 89, 34, 74, 120, 94, 159, 110, 42, 128, 33, 116, 145, 118, 103, 161, 132, 232, 161, 18, 157, 136, 227, 88, 129, 86, 171, 56, 159, 169, 235, 200, 57, 54, 252, 193, 48, 107, 146, 228, 44, 209, 198, 174, 100, 107, 159, 139, 66, 1, 0, 138, 23, 252, 106, 111, 120, 198, 31, 35, 157, 91, 60, 102, 7, 165, 240, 89, 29, 176, 16, 249, 207, 99, 117, 124, 81, 98, 113, 103, 187, 60, 3, 2, 3, 1, 0, 1];
-        let akcipher_key: Vec<u8> = vec![48, 130, 2, 34, 2, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 2, 130, 2, 15, 0, 48, 130, 2, 10, 2, 130, 2, 1, 0, 196, 188, 24, 75, 124, 246, 117, 46, 227, 245, 55, 148, 204, 252, 111, 70, 114, 212, 251, 97, 70, 231, 127, 4, 67, 250, 202, 131, 161, 108, 17, 59, 193, 26, 188, 172, 179, 202, 91, 120, 82, 177, 105, 199, 251, 246, 7, 200, 169, 132, 223, 94, 111, 49, 214, 142, 98, 30, 58, 44, 139, 100, 26, 68, 244, 248, 248, 53, 150, 202, 237, 167, 106, 38, 242, 54, 246, 91, 168, 118, 175, 72, 208, 0, 201, 135, 157, 53, 221, 97, 37, 216, 71, 246, 66, 24, 68, 75, 7, 150, 201, 114, 220, 94, 131, 17, 213, 236, 200, 239, 90, 4, 128, 95, 184, 40, 127, 78, 47, 16, 124, 225, 225, 160, 120, 92, 141, 33, 118, 175, 84, 104, 206, 230, 160, 188, 29, 201, 26, 76, 136, 34, 51, 49, 245, 82, 194, 237, 204, 202, 173, 38, 129, 30, 203, 214, 222, 75, 183, 212, 184, 204, 63, 83, 27, 225, 187, 94, 114, 226, 243, 196, 238, 138, 87, 66, 154, 109, 33, 243, 184, 192, 214, 148, 164, 124, 53, 194, 165, 91, 116, 105, 84, 80, 198, 208, 89, 231, 143, 86, 36, 163, 112, 6, 76, 38, 18, 58, 171, 245, 36, 129, 14, 30, 203, 157, 8, 104, 81, 189, 209, 126, 80, 3, 128, 183, 250, 106, 249, 190, 207, 53, 159, 89, 41, 171, 81, 92, 88, 148, 224, 227, 76, 235, 177, 19, 3, 116, 233, 59, 102, 174, 177, 204, 192, 147, 71, 127, 230, 81, 234, 100, 206, 255, 240, 67, 104, 12, 85, 116, 7, 9, 201, 251, 225, 158, 143, 231, 196, 82, 93, 173, 236, 38, 225, 183, 81, 45, 145, 75, 89, 21, 186, 134, 187, 179, 165, 31, 65, 162, 16, 208, 228, 186, 124, 63, 202, 68, 170, 140, 146, 170, 242, 197, 40, 39, 210, 205, 54, 146, 181, 29, 219, 6, 81, 158, 244, 183, 84, 234, 2, 132, 11, 22, 10, 104, 220, 197, 228, 234, 180, 242, 139, 149, 35, 18, 49, 58, 204, 11, 201, 130, 238, 157, 20, 203, 139, 190, 189, 234, 180, 219, 133, 228, 244, 65, 199, 167, 224, 84, 155, 8, 143, 139, 38, 197, 203, 18, 186, 23, 226, 196, 139, 219, 78, 101, 246, 19, 155, 146, 197, 212, 66, 81, 132, 146, 31, 5, 244, 133, 250, 182, 148, 204, 178, 51, 91, 52, 3, 8, 48, 108, 107, 33, 7, 23, 65, 44, 81, 72, 160, 95, 218, 100, 18, 10, 210, 179, 75, 75, 89, 34, 74, 120, 94, 159, 110, 42, 128, 33, 116, 145, 118, 103, 161, 132, 232, 161, 18, 157, 136, 227, 88, 129, 86, 171, 56, 159, 169, 235, 200, 57, 54, 252, 193, 48, 107, 146, 228, 44, 209, 198, 174, 100, 107, 159, 139, 66, 1, 0, 138, 23, 252, 106, 111, 120, 198, 31, 35, 157, 91, 60, 102, 7, 165, 240, 89, 29, 176, 16, 249, 207, 99, 117, 124, 81, 98, 113, 103, 187, 60, 3, 2, 3, 1, 0, 1];
-        let akcipher_result = Akcipher::akcipher(
-            &device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_RAW_PADDING,
-            VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_NO_HASH, Akcipher::PUBLIC,
-            &akcipher_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::ENCRYPT, &data2
-        );
-        early_println!("{:?}", akcipher_result);
-
+        // let akcipher_key: Vec<u8> = vec![48, 130, 2, 34, 2, 13, 6, 9, 42, 134, 72, 134, 247, 13, 1, 1, 1, 5, 0, 2, 130, 2, 15, 0, 48, 130, 2, 10, 2, 130, 2, 1, 0, 196, 188, 24, 75, 124, 246, 117, 46, 227, 245, 55, 148, 204, 252, 111, 70, 114, 212, 251, 97, 70, 231, 127, 4, 67, 250, 202, 131, 161, 108, 17, 59, 193, 26, 188, 172, 179, 202, 91, 120, 82, 177, 105, 199, 251, 246, 7, 200, 169, 132, 223, 94, 111, 49, 214, 142, 98, 30, 58, 44, 139, 100, 26, 68, 244, 248, 248, 53, 150, 202, 237, 167, 106, 38, 242, 54, 246, 91, 168, 118, 175, 72, 208, 0, 201, 135, 157, 53, 221, 97, 37, 216, 71, 246, 66, 24, 68, 75, 7, 150, 201, 114, 220, 94, 131, 17, 213, 236, 200, 239, 90, 4, 128, 95, 184, 40, 127, 78, 47, 16, 124, 225, 225, 160, 120, 92, 141, 33, 118, 175, 84, 104, 206, 230, 160, 188, 29, 201, 26, 76, 136, 34, 51, 49, 245, 82, 194, 237, 204, 202, 173, 38, 129, 30, 203, 214, 222, 75, 183, 212, 184, 204, 63, 83, 27, 225, 187, 94, 114, 226, 243, 196, 238, 138, 87, 66, 154, 109, 33, 243, 184, 192, 214, 148, 164, 124, 53, 194, 165, 91, 116, 105, 84, 80, 198, 208, 89, 231, 143, 86, 36, 163, 112, 6, 76, 38, 18, 58, 171, 245, 36, 129, 14, 30, 203, 157, 8, 104, 81, 189, 209, 126, 80, 3, 128, 183, 250, 106, 249, 190, 207, 53, 159, 89, 41, 171, 81, 92, 88, 148, 224, 227, 76, 235, 177, 19, 3, 116, 233, 59, 102, 174, 177, 204, 192, 147, 71, 127, 230, 81, 234, 100, 206, 255, 240, 67, 104, 12, 85, 116, 7, 9, 201, 251, 225, 158, 143, 231, 196, 82, 93, 173, 236, 38, 225, 183, 81, 45, 145, 75, 89, 21, 186, 134, 187, 179, 165, 31, 65, 162, 16, 208, 228, 186, 124, 63, 202, 68, 170, 140, 146, 170, 242, 197, 40, 39, 210, 205, 54, 146, 181, 29, 219, 6, 81, 158, 244, 183, 84, 234, 2, 132, 11, 22, 10, 104, 220, 197, 228, 234, 180, 242, 139, 149, 35, 18, 49, 58, 204, 11, 201, 130, 238, 157, 20, 203, 139, 190, 189, 234, 180, 219, 133, 228, 244, 65, 199, 167, 224, 84, 155, 8, 143, 139, 38, 197, 203, 18, 186, 23, 226, 196, 139, 219, 78, 101, 246, 19, 155, 146, 197, 212, 66, 81, 132, 146, 31, 5, 244, 133, 250, 182, 148, 204, 178, 51, 91, 52, 3, 8, 48, 108, 107, 33, 7, 23, 65, 44, 81, 72, 160, 95, 218, 100, 18, 10, 210, 179, 75, 75, 89, 34, 74, 120, 94, 159, 110, 42, 128, 33, 116, 145, 118, 103, 161, 132, 232, 161, 18, 157, 136, 227, 88, 129, 86, 171, 56, 159, 169, 235, 200, 57, 54, 252, 193, 48, 107, 146, 228, 44, 209, 198, 174, 100, 107, 159, 139, 66, 1, 0, 138, 23, 252, 106, 111, 120, 198, 31, 35, 157, 91, 60, 102, 7, 165, 240, 89, 29, 176, 16, 249, 207, 99, 117, 124, 81, 98, 113, 103, 187, 60, 3, 2, 3, 1, 0, 1];
+        // let akcipher_result = Akcipher::akcipher(
+        //     &device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_RAW_PADDING,
+        //     VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_NO_HASH, Akcipher::PUBLIC,
+        //     &akcipher_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::ENCRYPT, &data2
+        // );
+        // early_println!("{:?}", akcipher_result);
 
         Ok(())
     }
@@ -228,6 +253,58 @@ impl CryptoDevice {
             early_println!("  - {}", akcipher_name);
         }
     }
+
+    pub const CONTROLQ: u32 = 0;
+    pub const DATAQ: u32 = 1;
+
+    pub fn is_finished(&self, queue_index: u32, token: u16) -> bool {
+        let manager = if queue_index == Self::CONTROLQ {
+            &self.controlq_manager
+        } else {
+            &self.dataq_manager
+        };
+        self.flush_state();
+        manager.disable_irq().lock().is_finished(token)
+    } 
+
+    pub fn get_resp_slice_from(&self, queue_index: u32, token: u16) -> (DmaStreamSlice<&DmaStream>, u32) {
+        let manager = if queue_index == Self::CONTROLQ {
+            &self.controlq_manager
+        } else {
+            &self.dataq_manager
+        };
+
+        let submitted_req = {
+            self.flush_state();
+            let mut looping = true;
+            let mut submitted_req = manager.disable_irq().lock().pop(token);
+            while looping {
+                match submitted_req {
+                    Ok(_) => {
+                        looping = false;
+                    }
+                    Err(_) => {
+                        spin_loop();
+                        self.flush_state();
+                        submitted_req = manager.disable_irq().lock().pop(token);
+                    }
+                }
+            }
+            submitted_req.unwrap()
+        };
+
+        let resp_slice = DmaStreamSlice::new(
+            &self.response_buffer,
+            submitted_req.resp_slice_record.head,
+            submitted_req.resp_slice_record.tail - submitted_req.resp_slice_record.head,
+        );
+
+        self.request_buffer_allocator.disable_irq().lock().deallocate(&submitted_req.req_slice_record);
+        self.response_buffer_allocator.disable_irq().lock().deallocate(&submitted_req.resp_slice_record);
+
+        resp_slice.sync().unwrap();
+        (resp_slice, submitted_req.write_len)
+    }
 }
 
 pub struct SliceAllocator {
@@ -243,7 +320,10 @@ impl SliceAllocator {
             id_allocator: SpinLock::new(IdAlloc::with_capacity(id_capacity)),
             space_slices: {
                 let mut space_slices = Vec::new();
-                space_slices.push(SpaceSlice { head: 0, tail: stream_size,});
+                space_slices.push(SpaceSlice {
+                    head: 0,
+                    tail: stream_size,
+                });
                 space_slices
             },
         }
@@ -265,7 +345,8 @@ impl SliceAllocator {
                 slice_record.tail = head + size;
                 let _ = &mut self.space_slices.remove(i);
                 if slice_record.tail != tail {
-                    self.space_slices.insert(i, SpaceSlice::new(slice_record.tail, tail));
+                    self.space_slices
+                        .insert(i, SpaceSlice::new(slice_record.tail, tail));
                 }
                 allocated = true;
                 slice_record.id = self.id_allocator.disable_irq().lock().alloc().unwrap();
@@ -293,12 +374,16 @@ impl SliceAllocator {
                 if i == len {
                     usize::MAX
                 } else {
-                    self.space_slices[(i+1) as usize].head
+                    self.space_slices[(i + 1) as usize].head
                 }
             };
 
             if slice_record.head >= prev_tail && slice_record.head <= next_head {
-                if slice_record.head == prev_tail && slice_record.tail == next_head && i != -1 && j != len {
+                if slice_record.head == prev_tail
+                    && slice_record.tail == next_head
+                    && i != -1
+                    && j != len
+                {
                     self.space_slices[i as usize].tail = self.space_slices[j as usize].tail;
                     self.space_slices.remove(j as usize);
                 } else if slice_record.head == prev_tail && i != -1 {
@@ -306,12 +391,14 @@ impl SliceAllocator {
                 } else if slice_record.tail == next_head && j != len {
                     self.space_slices[j as usize].head = slice_record.head;
                 } else {
-                    self.space_slices.insert(j as usize, SpaceSlice::new(slice_record.head, slice_record.tail));
+                    self.space_slices.insert(
+                        j as usize,
+                        SpaceSlice::new(slice_record.head, slice_record.tail),
+                    );
                 }
 
                 break;
             }
-            
         }
     }
 
@@ -326,9 +413,9 @@ impl SliceAllocator {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct SliceRecord {
-    id: usize,
-    head: usize,
-    tail: usize,
+    pub id: usize,
+    pub head: usize,
+    pub tail: usize,
 }
 
 impl SliceRecord {
@@ -344,15 +431,120 @@ impl SliceRecord {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct SpaceSlice {
-    head: usize,
-    tail: usize,
+    pub head: usize,
+    pub tail: usize,
 }
 
 impl SpaceSlice {
     fn new(head: usize, tail: usize) -> Self {
+        Self { head, tail }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SubmittedReq {
+    pub token: u16,
+    pub req_slice_record: SliceRecord,
+    pub resp_slice_record: SliceRecord,
+    pub finished: bool,
+    pub write_len: u32,
+}
+
+impl SubmittedReq {
+    pub fn default() -> Self {
         Self {
-            head,
-            tail,
+            token: 0,
+            req_slice_record: SliceRecord::default(),
+            resp_slice_record: SliceRecord::default(),
+            finished: false,
+            write_len: 0,
         }
+    }
+
+    pub fn new(
+        token: u16,
+        req_slice_record: SliceRecord,
+        resp_slice_record: SliceRecord,
+        finished: bool,
+        write_len: u32,
+    ) -> Self {
+        Self {
+            token,
+            req_slice_record,
+            resp_slice_record,
+            finished,
+            write_len,
+        }
+    }
+}
+
+pub struct SubmittedReqManager {
+    pub records: Vec<SubmittedReq>,
+}
+
+impl SubmittedReqManager {
+    pub const NOT_FIND: u32 = 1;
+    pub const NOT_FINISHED: u32 = 2;
+
+    pub fn new() -> Self {
+        Self {
+            records: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, record: SubmittedReq) {
+        self.records.push(record);
+    }
+
+    pub fn finish(&mut self, token: u16, write_len: u32) {
+        let len = self.records.len();
+        let mut find = false;
+        for i in 0..len {
+            if self.records[i].token == token {
+                self.records[i].finished = true;
+                self.records[i].write_len = write_len;
+                find = true;
+                break;
+            }
+        }
+        if !find {panic!("invalid token")}
+    }
+
+    pub fn is_finished(&self, token: u16) -> bool {
+        let mut ret = false;
+        for record in &self.records {
+            if token == record.token {
+                ret = record.finished;
+                break;
+            }
+        }
+        ret
+    }
+
+    pub fn pop(&mut self, token: u16) -> Result<SubmittedReq, u32> {
+        let len = self.records.len();
+        let mut ret = SubmittedReq::default();
+        let mut find = false;
+        for i in 0..len {
+            let token_i = self.records[i].token;
+            if token == token_i {
+                find = true;
+
+                if self.records[i].finished == true {
+                    ret = self.records[i].clone();
+                    self.records.remove(i);
+                } else {
+                    return Err(Self::NOT_FINISHED);
+                }
+                break;
+            }
+        }
+
+        if !find {
+            return Err(Self::NOT_FIND);
+        }
+
+        Ok(ret)
     }
 }
