@@ -6,11 +6,7 @@ use log::debug;
 use id_alloc::IdAlloc;
 use alloc::vec;
 use ostd::{
-    early_println,
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
-    sync::SpinLock,
-    Pod,
-    mm::VmIo
+    console::early_print, early_println, mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo}, sync::SpinLock, Pod
 };
 use super::{config::{CryptoFeatures, VirtioCryptoConfig}, service::services::VIRTIO_CRYPTO_SERVICE_CIPHER};
 use crate::{
@@ -184,22 +180,26 @@ impl CryptoDevice {
         assert_eq!(data2, akcipher_decrypt_result, "[Test] The initial data and decrypted data of AKCIPHER are inconsistent");
         early_println!("[Test] AKCIPHER encrypt-decrypt test pass!");
         
-        early_println!("[Test] Original data for AKCIPHER: {:?}", data2);
+
+        let data3 = vec![49, 95, 91, 219, 118, 208, 120, 196, 59, 138, 192, 6, 78, 74, 1, 100, 97, 43, 31, 206, 119, 200, 105, 52, 91, 252, 148, 199, 88, 148, 237, 211];
+
+        early_println!("[Test] Original data for AKCIPHER: {:?}", data3);
         let akcipher_sign_result = Akcipher::akcipher(
             &device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_PKCS1_PADDING,
             VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_SHA256, Akcipher::PRIVATE,
-            &private_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::SIGN, &data2
+            &private_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::SIGN, &data3
         );
         early_println!("[Test] Signature for AKCIPHER: {:?}", akcipher_sign_result);
 
+        let verify_input = [akcipher_sign_result.as_slice(), data3.as_slice()].concat();
+        early_println!("[Test] Sign_result length: {:?}, Data_result length: {:?}", akcipher_sign_result.len(), data3.len());
         let akcipher_verify_result = Akcipher::akcipher(
             &device, VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_PKCS1_PADDING,
             VirtioCryptoRsaSessionPara::VIRTIO_CRYPTO_RSA_SHA256, Akcipher::PUBLIC,
-            &pub_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::VERIFY, &akcipher_sign_result
+            &pub_key, VIRTIO_CRYPTO_AKCIPHER_RSA, Akcipher::VERIFY, &verify_input,
         );
         early_println!("[Test] Verification for AKCIPHER: {:?}", akcipher_verify_result);
-
-        assert_eq!(data2, akcipher_verify_result, "[Test] The initial data and verification data of AKCIPHER are inconsistent");
+        assert!(akcipher_verify_result[0] == 0, "[Test] AKCIPHER sign-verify test failed!");
         early_println!("[Test] AKCIPHER sign-verify test pass!");
 
         Ok(())

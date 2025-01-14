@@ -245,9 +245,14 @@ impl Akcipher {
             };
 
             let akcipher_data_flf = {
+                let _dst_data_len = match op {
+                    Self::ENCRYPT | Self::DECRYPT | Self::SIGN => dst_data_len,
+                    Self::VERIFY => 0,
+                    _ => panic!("invalid para: op"),
+                };
                 let akcipher_data_flf = VirtioCryptoAkcipherDataFlf {
                     src_data_len: src_data.len() as u32,
-                    dst_data_len,
+                    dst_data_len: _dst_data_len,
                 };
                 akcipher_data_flf.pad_to_48()
             };
