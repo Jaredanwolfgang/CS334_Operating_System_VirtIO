@@ -1,7 +1,8 @@
 use core::mem::offset_of;
-use ostd::Pod;
 
 use aster_util::safe_ptr::SafePtr;
+use ostd::Pod;
+
 use crate::transport::{ConfigManager, VirtioTransport};
 
 bitflags::bitflags! {
@@ -23,7 +24,6 @@ bitflags::bitflags! {
 
     }
 }
-
 
 #[derive(Debug, Pod, Clone, Copy)]
 // repr(c)使该结构体的内存布局与C兼容
@@ -51,8 +51,6 @@ pub struct VirtioCryptoConfig {
     // TODO: 实际上是u64
     pub max_size: u32,
 }
-
-
 
 impl VirtioCryptoConfig {
     pub(super) fn new_manager(transport: &dyn VirtioTransport) -> ConfigManager<Self> {

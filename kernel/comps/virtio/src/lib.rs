@@ -18,11 +18,11 @@ use component::{init_component, ComponentInitError};
 use device::{
     block::device::BlockDevice,
     console::device::ConsoleDevice,
+    crypto::device::CryptoDevice,
+    entropy::device::EntropyDevice,
     input::device::InputDevice,
     network::device::NetworkDevice,
     socket::{self, device::SocketDevice},
-    entropy::device::EntropyDevice,
-    crypto::device::CryptoDevice,
     VirtioDeviceType,
 };
 use log::{error, warn};

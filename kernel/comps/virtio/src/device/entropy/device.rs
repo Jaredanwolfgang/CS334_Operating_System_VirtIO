@@ -1,19 +1,13 @@
-use ostd::{
-    sync::SpinLock,
-    mm::{DmaDirection, DmaStream, FrameAllocOptions, DmaStreamSlice},
-    early_println,
-};
+use alloc::{boxed::Box, sync::Arc};
 use core::hint::spin_loop;
-use crate::{
-    transport::VirtioTransport,
-    device::VirtioDeviceError,
-    queue::VirtQueue,
-};
-use alloc::{
-    boxed::Box,
-    sync::Arc,
+
+use ostd::{
+    early_println,
+    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions},
+    sync::SpinLock,
 };
 
+use crate::{device::VirtioDeviceError, queue::VirtQueue, transport::VirtioTransport};
 
 pub struct EntropyDevice {
     request_buffer: DmaStream,
@@ -29,7 +23,8 @@ impl EntropyDevice {
     pub fn init(mut transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
         // Initalize the request virtqueue
         const REQUEST_QUEUE_INDEX: u16 = 0;
-        let request_queue = SpinLock::new(VirtQueue::new(REQUEST_QUEUE_INDEX, 1, transport.as_mut()).unwrap());
+        let request_queue =
+            SpinLock::new(VirtQueue::new(REQUEST_QUEUE_INDEX, 1, transport.as_mut()).unwrap());
 
         // Initalize the request buffer
         let request_buffer = {
@@ -43,7 +38,7 @@ impl EntropyDevice {
             request_queue,
             transport: SpinLock::new(transport),
         });
-    
+
         // Finish init
         device.transport.lock().finish_init();
         Ok(())

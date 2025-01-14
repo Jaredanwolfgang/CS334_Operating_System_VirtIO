@@ -1,8 +1,9 @@
+use alloc::{string::String, vec::Vec};
+
 use bitflags::bitflags;
 use ostd::Pod;
-use alloc::vec::Vec;
+
 use crate::alloc::string::ToString;
-use alloc::string::String;
 
 pub const VIRTIO_CRYPTO_NO_HASH: u32 = 0;
 pub const VIRTIO_CRYPTO_HASH_MD5: u32 = 1;
@@ -86,19 +87,18 @@ impl SupportedHashes {
     }
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct VirtioCryptoHashCreateSessionFlf {
     pub algo: u32,
-    pub hash_result_len: u32
+    pub hash_result_len: u32,
 }
 
 impl Default for VirtioCryptoHashCreateSessionFlf {
     fn default() -> Self {
         Self {
             algo: VIRTIO_CRYPTO_HASH_SHA1,
-            hash_result_len: 20
+            hash_result_len: 20,
         }
     }
 }
@@ -118,11 +118,11 @@ impl VirtioCryptoHashCreateSessionFlf {
             VIRTIO_CRYPTO_HASH_SHA3_512 => 64,
             VIRTIO_CRYPTO_HASH_SHA3_SHAKE128 => 16,
             VIRTIO_CRYPTO_HASH_SHA3_SHAKE256 => 32,
-            _ => 0
+            _ => 0,
         };
         Self {
             algo,
-            hash_result_len
+            hash_result_len,
         }
     }
 }

@@ -1,7 +1,8 @@
+use alloc::{string::String, vec::Vec};
+
 use bitflags::bitflags;
-use alloc::vec::Vec;
+
 use crate::alloc::string::ToString;
-use alloc::string::String;
 
 const VIRTIO_CRYPTO_NO_AEAD: u32 = 0;
 const VIRTIO_CRYPTO_AEAD_GCM: u32 = 1;

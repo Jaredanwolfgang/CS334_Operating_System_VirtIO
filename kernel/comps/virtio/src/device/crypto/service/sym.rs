@@ -12,12 +12,13 @@ use super::{hash::*, mac::*, services::VIRTIO_CRYPTO_SERVICE_CIPHER};
 use crate::{
     alloc::string::ToString,
     device::crypto::{
-        device::{CryptoDevice, SubmittedReq}, header::{
+        device::{CryptoDevice, SubmittedReq},
+        header::{
             VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf,
             VirtioCryptoDestroySessionInput, VirtioCryptoInhdr, VirtioCryptoOpCtrlReqFlf,
             VirtioCryptoOpDataReq, VirtioCryptoOpHeader, VIRTIO_CRYPTO_CIPHER_DECRYPT,
             VIRTIO_CRYPTO_CIPHER_ENCRYPT,
-        }
+        },
     },
 };
 
@@ -116,8 +117,7 @@ impl SupportedCiphers {
 }
 
 // CIPHER SERVICE 抽象包
-pub struct Cipher {
-}
+pub struct Cipher {}
 
 impl Cipher {
     pub const ENCRYPT: u32 = 1;
@@ -217,7 +217,7 @@ impl Cipher {
                 req_slice_record,
                 resp_slice_record,
                 false,
-                0
+                0,
             ));
 
         if queue.should_notify() {
@@ -231,11 +231,19 @@ impl Cipher {
         // TODO_RAY: 检查service和algo的合法性
 
         let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE;
-        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
 
         let req_slice = {
-            let req_slice =
-                DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, VirtioCryptoOpCtrlReqFlf::SIZE);
+            let req_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head,
+                VirtioCryptoOpCtrlReqFlf::SIZE,
+            );
             let header = VirtioCryptoCtrlHeader::new(
                 VIRTIO_CRYPTO_SERVICE_CIPHER,
                 0,
@@ -250,7 +258,12 @@ impl Cipher {
         };
 
         let resp_slice_size = VirtioCryptoDestroySessionInput::SIZE;
-        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
 
         let resp_slice = {
             let resp_slice = DmaStreamSlice::new(
@@ -274,13 +287,17 @@ impl Cipher {
             queue.notify();
         }
 
-        device.controlq_manager.disable_irq().lock().add(SubmittedReq::new(
-            token, 
-            req_slice_record, 
-            resp_slice_record, 
-            false, 
-            0
-        ));
+        device
+            .controlq_manager
+            .disable_irq()
+            .lock()
+            .add(SubmittedReq::new(
+                token,
+                req_slice_record,
+                resp_slice_record,
+                false,
+                0,
+            ));
 
         (CryptoDevice::CONTROLQ, token)
     }
@@ -294,12 +311,15 @@ impl Cipher {
         src_data: &Vec<u8>,
         dst_data_len: u32,
     ) -> (u32, u16) {
-
         let req_slice_size = VirtioCryptoOpDataReq::SIZE + iv.len() + src_data.len();
-        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
 
         let req_slice = {
-
             let opcode = match encrypt_or_decrypt {
                 Cipher::ENCRYPT => VIRTIO_CRYPTO_CIPHER_ENCRYPT,
                 Cipher::DECRYPT => VIRTIO_CRYPTO_CIPHER_DECRYPT,
@@ -317,7 +337,7 @@ impl Cipher {
                 let crypto_data_flf = VirtioCryptoCipherDataFlf {
                     iv_len: iv.len() as u32,
                     src_data_len: src_data.len() as u32,
-                    dst_data_len: dst_data_len,
+                    dst_data_len,
                     padding: 0,
                 };
                 VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER)
@@ -325,7 +345,11 @@ impl Cipher {
             let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf);
             let combined_req = [crypto_req.as_bytes(), iv.as_slice(), src_data.as_slice()].concat();
 
-            let req_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, req_slice_size);
+            let req_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head,
+                req_slice_size,
+            );
             req_slice.write_bytes(0, combined_req.as_slice()).unwrap();
             req_slice.sync().unwrap();
             req_slice
@@ -335,16 +359,22 @@ impl Cipher {
         let inhdr = VirtioCryptoInhdr::default();
 
         let resp_slice_size = dst_data.len() + VirtioCryptoInhdr::SIZE as usize;
-        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
 
         let resp_slice = {
             let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
-            
 
-            let resp_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, resp_slice_size);
-            resp_slice
-                .write_bytes(0, combined_resp.as_slice())
-                .unwrap();
+            let resp_slice = DmaStreamSlice::new(
+                &device.response_buffer,
+                resp_slice_record.head,
+                resp_slice_size,
+            );
+            resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
             resp_slice
         };
 
@@ -358,26 +388,32 @@ impl Cipher {
         }
 
         device
-        .dataq_manager
-        .disable_irq()
-        .lock()
-        .add(SubmittedReq::new(
-            token,
-            req_slice_record,
-            resp_slice_record,
-            false,
-            0
-        ));
+            .dataq_manager
+            .disable_irq()
+            .lock()
+            .add(SubmittedReq::new(
+                token,
+                req_slice_record,
+                resp_slice_record,
+                false,
+                0,
+            ));
 
         (CryptoDevice::DATAQ, token)
     }
 
-    pub fn create_session(device: &CryptoDevice, algo: u32, encrypt_or_decrypt: u32, cipher_key: &[u8]) -> u64 {
+    pub fn create_session(
+        device: &CryptoDevice,
+        algo: u32,
+        encrypt_or_decrypt: u32,
+        cipher_key: &[u8],
+    ) -> u64 {
         // 下面的(b)步骤可以在执行(a)步骤后的任意时刻执行
         // (c)步骤可以在(a)步骤和(b)步骤之间的任何时刻执行
-        
+
         // (a) 发送create_session请求，返回请求所对应的queue_index和token
-        let (queue_index, token) = Cipher::send_create_session_request(device, algo, encrypt_or_decrypt, cipher_key);
+        let (queue_index, token) =
+            Cipher::send_create_session_request(device, algo, encrypt_or_decrypt, cipher_key);
         // (b) 通过token从对应queue查询该请求是否已经完成
         let _finished = device.is_finished(queue_index, token);
         // (c) 通过token从对应queue获取该请求的resp_slice和write_len，如果该请求尚未完成，则spin_loop直到请求完成并返回
@@ -390,7 +426,7 @@ impl Cipher {
         resp.session_id
     }
 
-    pub fn encrypt_or_decrypt(        
+    pub fn encrypt_or_decrypt(
         device: &CryptoDevice,
         algo: u32,
         session_id: u64,
@@ -399,10 +435,18 @@ impl Cipher {
         src_data: &Vec<u8>,
         dst_data_len: u32,
     ) -> Vec<u8> {
-        let (queue_index, token) = Cipher::send_encrypt_or_decrypt_request(device, algo, session_id, encrypt_or_decrypt, iv, src_data, dst_data_len);
+        let (queue_index, token) = Cipher::send_encrypt_or_decrypt_request(
+            device,
+            algo,
+            session_id,
+            encrypt_or_decrypt,
+            iv,
+            src_data,
+            dst_data_len,
+        );
         let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
 
-        let mut binding = vec![0 as u8; dst_data_len as usize];
+        let mut binding = vec![0_u8; dst_data_len as usize];
         let result = binding.as_mut_slice();
         resp_slice.read_bytes(0, result).unwrap();
         early_println!("Data: {:X?}", result);
@@ -417,16 +461,44 @@ impl Cipher {
         early_println!("Status: {:?}", resp);
     }
 
-    pub fn encrypt(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+    pub fn encrypt(
+        device: &CryptoDevice,
+        algo: u32,
+        cipher_key: &[u8],
+        iv: &Vec<u8>,
+        src_data: &Vec<u8>,
+    ) -> Vec<u8> {
         let session_id = Cipher::create_session(device, algo, Cipher::ENCRYPT, cipher_key);
-        let dst_data = Cipher::encrypt_or_decrypt(device, algo, session_id, Cipher::ENCRYPT, iv, src_data, src_data.len() as u32);
+        let dst_data = Cipher::encrypt_or_decrypt(
+            device,
+            algo,
+            session_id,
+            Cipher::ENCRYPT,
+            iv,
+            src_data,
+            src_data.len() as u32,
+        );
         Cipher::send_destroy_session_request(device, session_id);
         dst_data
     }
 
-    pub fn decrypt(device: &CryptoDevice, algo: u32, cipher_key: &[u8], iv: &Vec<u8>, src_data: &Vec<u8>) -> Vec<u8> {
+    pub fn decrypt(
+        device: &CryptoDevice,
+        algo: u32,
+        cipher_key: &[u8],
+        iv: &Vec<u8>,
+        src_data: &Vec<u8>,
+    ) -> Vec<u8> {
         let session_id = Cipher::create_session(device, algo, Cipher::DECRYPT, cipher_key);
-        let dst_data = Cipher::encrypt_or_decrypt(device, algo, session_id, Cipher::DECRYPT, iv, src_data, src_data.len() as u32);
+        let dst_data = Cipher::encrypt_or_decrypt(
+            device,
+            algo,
+            session_id,
+            Cipher::DECRYPT,
+            iv,
+            src_data,
+            src_data.len() as u32,
+        );
         Cipher::send_destroy_session_request(device, session_id);
         dst_data
     }
@@ -516,14 +588,14 @@ impl VirtioCryptoChainAlgSessionFlf {
                 let hash_session = VirtioCryptoHashCreateSessionFlf::new(hash_algo);
                 let hash_flf = hash_session.as_bytes();
                 let mut flf = [0; VIRTIO_CRYPTO_ALG_CHAIN_SESS_OP_SPEC_HDR_SIZE as usize];
-                flf[..hash_flf.len()].copy_from_slice(&hash_flf);
+                flf[..hash_flf.len()].copy_from_slice(hash_flf);
                 flf
             }
             VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => {
                 let mac_session = VirtioCryptoMacCreateSessionFlf::new(hash_algo);
                 let mac_flf = mac_session.as_bytes();
                 let mut flf = [0; VIRTIO_CRYPTO_ALG_CHAIN_SESS_OP_SPEC_HDR_SIZE as usize];
-                flf[..mac_flf.len()].copy_from_slice(&mac_flf);
+                flf[..mac_flf.len()].copy_from_slice(mac_flf);
                 flf
             }
             _ => unimplemented!("Unsupported hash mode"),

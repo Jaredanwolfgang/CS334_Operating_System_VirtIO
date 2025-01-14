@@ -1,5 +1,5 @@
-pub mod device;
 pub mod config;
+pub mod device;
 pub mod header;
 pub mod service;
 

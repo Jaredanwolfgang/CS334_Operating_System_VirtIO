@@ -1,8 +1,9 @@
+use alloc::{string::String, vec::Vec};
+
 use bitflags::bitflags;
 use ostd::Pod;
-use alloc::vec::Vec;
+
 use crate::alloc::string::ToString;
-use alloc::string::String;
 
 const VIRTIO_CRYPTO_NO_MAC: u32 = 0;
 const VIRTIO_CRYPTO_MAC_HMAC_MD5: u32 = 1;
