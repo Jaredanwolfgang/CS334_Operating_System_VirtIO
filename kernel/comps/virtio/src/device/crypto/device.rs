@@ -104,13 +104,13 @@ impl CryptoDevice {
         );
 
         let request_buffer = {
-            let vm_segment = FrameAllocOptions::new(1).alloc_contiguous().unwrap();
-            DmaStream::map(vm_segment, DmaDirection::Bidirectional, false).unwrap()
+            let vm_segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
+            DmaStream::map(vm_segment.into(), DmaDirection::Bidirectional, false).unwrap()
         };
 
         let response_buffer = {
-            let vm_segment = FrameAllocOptions::new(1).alloc_contiguous().unwrap();
-            DmaStream::map(vm_segment, DmaDirection::Bidirectional, false).unwrap()
+            let vm_segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
+            DmaStream::map(vm_segment.into(), DmaDirection::Bidirectional, false).unwrap()
         };
 
         let request_buffer_size = request_buffer.nbytes();

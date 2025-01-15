@@ -28,8 +28,8 @@ impl EntropyDevice {
 
         // Initalize the request buffer
         let request_buffer = {
-            let vm_segment = FrameAllocOptions::new(1).alloc_contiguous().unwrap();
-            DmaStream::map(vm_segment, DmaDirection::FromDevice, false).unwrap()
+            let vm_segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
+            DmaStream::map(vm_segment.into(), DmaDirection::FromDevice, false).unwrap()
         };
 
         // Create device

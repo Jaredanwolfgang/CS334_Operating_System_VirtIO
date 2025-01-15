@@ -640,13 +640,20 @@ impl ChainAlg {
         }
     }
 
-    pub fn create_session(&self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8]) -> u64 {
+    pub fn send_create_session_request(&self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8]) -> (u32, u16) {
         // TODO_RAY: 检查service和algo的合法性
-        // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
+
+        let req_slice_size = VirtioCryptoOpDataReq::SIZE + cipher_key.len() + auth_key.len();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
+
         let req_flf_slice = {
-            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
             let req_flf_slice =
-                DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+                DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, VirtioCryptoOpCtrlReqFlf::SIZE);
 
             let header = VirtioCryptoCtrlHeader::new(
                 VIRTIO_CRYPTO_SERVICE_CIPHER,
@@ -683,27 +690,18 @@ impl ChainAlg {
             req_flf_slice
         };
 
-        // TODO_RAY: 或许需要为device添加新的buffer代替variable_length_data_stream
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
-
         let req_vlf_slice = {
             let req_vlf_slice = match self.hash_mode {
                 VIRTIO_CRYPTO_SYM_HASH_MODE_PLAIN => {
                     let req_vlf_slice =
-                        DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_key.len());
+                        DmaStreamSlice::new(&device.request_buffer, req_slice_record.head + VirtioCryptoOpCtrlReqFlf::SIZE, cipher_key.len());
                     req_vlf_slice.write_bytes(0, cipher_key).unwrap();
                     req_vlf_slice
                 }
                 VIRTIO_CRYPTO_SYM_HASH_MODE_AUTH => {
                     let auth_vlf_vec = [cipher_key, auth_key].concat();
                     let req_vlf_slice =
-                        DmaStreamSlice::new(&variable_length_data_stream, 0, auth_vlf_vec.len());
+                        DmaStreamSlice::new(&device.request_buffer, req_slice_record.head + VirtioCryptoOpCtrlReqFlf::SIZE + cipher_key.len(), auth_vlf_vec.len());
                     req_vlf_slice
                         .write_bytes(0, auth_vlf_vec.as_slice())
                         .unwrap();
@@ -716,10 +714,18 @@ impl ChainAlg {
 
         let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
 
+        let resp_slice_size = VirtioCryptoCreateSessionInput::SIZE;
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
+
         let resp_slice = {
             let resp_slice = DmaStreamSlice::new(
                 &device.response_buffer,
-                0,
+                resp_slice_record.head,
                 VirtioCryptoCreateSessionInput::SIZE,
             );
             resp_slice
@@ -738,25 +744,31 @@ impl ChainAlg {
             queue.notify();
         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
+        device.controlq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
 
-        resp_slice.sync().unwrap();
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    pub fn create_session(&self, device: &CryptoDevice, cipher_key: &[u8], auth_key: &[u8]) -> u64 {
+        let (queue_index, token) = self.send_create_session_request(device, cipher_key, auth_key);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
         resp.session_id
     }
 
-    pub fn destroy_session(&self, device: &CryptoDevice) {
+
+    pub fn send_destroy_session_request(&self, device: &CryptoDevice) -> (u32, u16) {
         // TODO_RAY: 检查service和algo的合法性
-        // TODO_RAY: 使用某种id_allocator来分配id（用来实现异步的数据传输与加解密）
+
+        let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE;
+        let req_slice_record = device.request_buffer_allocator.disable_irq().lock().allocate(req_slice_size).unwrap();
 
         let req_slice = {
-            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
             let req_slice =
-                DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpCtrlReqFlf::SIZE);
+                DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, VirtioCryptoOpCtrlReqFlf::SIZE);
             let header = VirtioCryptoCtrlHeader::new(
                 VIRTIO_CRYPTO_SERVICE_CIPHER,
                 0,
@@ -770,10 +782,13 @@ impl ChainAlg {
             req_slice
         };
 
+        let resp_slice_size = VirtioCryptoCreateSessionInput::SIZE;
+        let resp_slice_record = device.response_buffer_allocator.disable_irq().lock().allocate(resp_slice_size).unwrap();
+
         let resp_slice = {
             let resp_slice = DmaStreamSlice::new(
                 &device.response_buffer,
-                0,
+                resp_slice_record.head,
                 VirtioCryptoCreateSessionInput::SIZE,
             );
             resp_slice
@@ -792,27 +807,40 @@ impl ChainAlg {
             queue.notify();
         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
-        queue.pop_used_with_token(token).expect("pop used failed");
+        device.controlq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
 
-        resp_slice.sync().unwrap();
+        (CryptoDevice::CONTROLQ, token)        
+    }
+
+    pub fn destroy_session(&self, device: &CryptoDevice) {
+        let (queue_index, token) = self.send_destroy_session_request(device);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
         early_println!("Status: {:?}", resp);
     }
 
-    pub fn hash_or_mac(
+    pub fn send_hash_or_mac_request(
         &self,
         device: &CryptoDevice,
         iv: &Vec<u8>,
         src_data: &Vec<u8>,
         dst_data_len: u32,
-    ) -> Vec<u8> {
+    ) -> (u32, u16) {
+
+        let req_slice_size = VirtioCryptoOpDataReq::SIZE + iv.len() + src_data.len();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
+
+
         let req_slice = {
-            // TODO_RAY: 如果实现异步，request_slice的offset和length需要调整
             let req_slice =
-                DmaStreamSlice::new(&device.request_buffer, 0, VirtioCryptoOpDataReq::SIZE);
+                DmaStreamSlice::new(&device.request_buffer, req_slice_record.head, VirtioCryptoOpDataReq::SIZE);
             let header = VirtioCryptoOpHeader {
                 opcode: match self.service {
                     ChainAlg::ENCRYPT => VIRTIO_CRYPTO_CIPHER_ENCRYPT,
@@ -862,21 +890,6 @@ impl ChainAlg {
             req_slice
         };
 
-        let variable_length_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::ToDevice, false).unwrap()
-        };
-
-        let output_data_stream = {
-            let segment = FrameAllocOptions::new(1)
-                .uninit(true)
-                .alloc_contiguous()
-                .unwrap();
-            DmaStream::map(segment, DmaDirection::Bidirectional, false).unwrap()
-        };
 
         let dst_data = vec![0; dst_data_len as usize];
         let inhr = VirtioCryptoInhdr::default();
@@ -884,7 +897,7 @@ impl ChainAlg {
         let input_slice = {
             let combined_input = [iv.as_slice(), src_data.as_slice()].concat();
             let cipher_data_len = combined_input.len();
-            let input_slice = DmaStreamSlice::new(&variable_length_data_stream, 0, cipher_data_len);
+            let input_slice = DmaStreamSlice::new(&device.request_buffer, req_slice_record.head + VirtioCryptoOpDataReq::SIZE, cipher_data_len);
             input_slice
                 .write_bytes(0, combined_input.as_slice())
                 .unwrap();
@@ -892,10 +905,18 @@ impl ChainAlg {
             input_slice
         };
 
+        let resp_slice_size = dst_data.len() + VirtioCryptoInhdr::SIZE as usize;
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
+
         let output_slice = {
             let combined_output = [dst_data.as_slice(), inhr.as_bytes()].concat();
             let output_len = combined_output.len();
-            let output_slice = DmaStreamSlice::new(&output_data_stream, 0, output_len);
+            let output_slice = DmaStreamSlice::new(&device.response_buffer, resp_slice_record.head, output_len);
             output_slice
                 .write_bytes(0, combined_output.as_slice())
                 .unwrap();
@@ -911,13 +932,24 @@ impl ChainAlg {
             queue.notify();
         }
 
-        while !queue.can_pop() {
-            spin_loop();
-        }
+        device.dataq_manager.disable_irq().lock().add(
+            SubmittedReq::new(token, req_slice_record, resp_slice_record, false, 0)
+        );
 
-        queue.pop_used_with_token(token).expect("pop used failed");
+        (CryptoDevice::DATAQ, token)
+        
+    }
 
-        output_slice.sync().unwrap();
+    pub fn hash_or_mac(
+        &self,
+        device: &CryptoDevice,
+        iv: &Vec<u8>,
+        src_data: &Vec<u8>,
+        dst_data_len: u32,
+    ) -> Vec<u8> {
+
+        let (queue_index, token) = self.send_hash_or_mac_request(device, iv, src_data, dst_data_len);
+        let (output_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
         let result = &mut [0u8; 32];
         output_slice.read_bytes(0, result).unwrap();
         // output_slice.read_bytes(cipher_data_len + 32, &mut status).unwrap();
@@ -925,6 +957,7 @@ impl ChainAlg {
         // early_println!("Status: {:?}", status);
         result.to_vec()
     }
+
 
     pub fn chaining_algorithms(
         mut self,
