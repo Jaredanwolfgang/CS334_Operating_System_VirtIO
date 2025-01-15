@@ -307,8 +307,8 @@ impl Cipher {
         algo: u32,
         session_id: u64,
         encrypt_or_decrypt: u32,
-        iv: &Vec<u8>,
-        src_data: &Vec<u8>,
+        iv: &[u8],
+        src_data: &[u8],
         dst_data_len: u32,
     ) -> (u32, u16) {
         let req_slice_size = VirtioCryptoOpDataReq::SIZE + iv.len() + src_data.len();
@@ -343,7 +343,7 @@ impl Cipher {
                 VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER)
             };
             let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf.as_bytes());
-            let combined_req = [crypto_req.as_bytes(), iv.as_slice(), src_data.as_slice()].concat();
+            let combined_req = [crypto_req.as_bytes(), iv, src_data].concat();
 
             let req_slice = DmaStreamSlice::new(
                 &device.request_buffer,
@@ -422,7 +422,6 @@ impl Cipher {
         let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
 
         early_println!("{:?}", resp);
-
         resp.session_id
     }
 
@@ -431,8 +430,8 @@ impl Cipher {
         algo: u32,
         session_id: u64,
         encrypt_or_decrypt: u32,
-        iv: &Vec<u8>,
-        src_data: &Vec<u8>,
+        iv: &[u8],
+        src_data: &[u8],
         dst_data_len: u32,
     ) -> Vec<u8> {
         let (queue_index, token) = Cipher::send_encrypt_or_decrypt_request(
@@ -449,7 +448,7 @@ impl Cipher {
         let mut binding = vec![0_u8; dst_data_len as usize];
         let result = binding.as_mut_slice();
         resp_slice.read_bytes(0, result).unwrap();
-        early_println!("Data: {:X?}", result);
+        // early_println!("Data: {:X?}", result);
         result.to_vec()
     }
 
@@ -465,8 +464,8 @@ impl Cipher {
         device: &CryptoDevice,
         algo: u32,
         cipher_key: &[u8],
-        iv: &Vec<u8>,
-        src_data: &Vec<u8>,
+        iv: &[u8],
+        src_data: &[u8],
     ) -> Vec<u8> {
         let session_id = Cipher::create_session(device, algo, Cipher::ENCRYPT, cipher_key);
         let dst_data = Cipher::encrypt_or_decrypt(
@@ -486,8 +485,8 @@ impl Cipher {
         device: &CryptoDevice,
         algo: u32,
         cipher_key: &[u8],
-        iv: &Vec<u8>,
-        src_data: &Vec<u8>,
+        iv: &[u8],
+        src_data: &[u8],
     ) -> Vec<u8> {
         let session_id = Cipher::create_session(device, algo, Cipher::DECRYPT, cipher_key);
         let dst_data = Cipher::encrypt_or_decrypt(

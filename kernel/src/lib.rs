@@ -72,6 +72,7 @@ pub mod time;
 mod util;
 pub(crate) mod vdso;
 pub mod vm;
+pub mod crypto;
 
 #[ostd::main]
 #[controlled]

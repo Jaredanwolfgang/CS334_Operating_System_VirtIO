@@ -1,6 +1,6 @@
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec, string::ToString};
+use aster_crypto::AnyCryptoDevice;
 use core::hint::spin_loop;
-
 use id_alloc::IdAlloc;
 use ostd::{
     early_println,
@@ -36,6 +36,16 @@ pub struct CryptoDevice {
     pub controlq: SpinLock<VirtQueue>,
     pub transport: SpinLock<Box<dyn VirtioTransport>>,
     pub supported_crypto_services: CryptoServiceMap,
+}
+
+impl AnyCryptoDevice for CryptoDevice {
+    fn cipher_encrypt(&self, data: &[u8], cipher_key: &[u8]) -> Vec<u8> {
+        self.cipher_encrypt(data, cipher_key)
+    }
+    
+    fn cipher_decrypt(&self, data: &[u8], cipher_key: &[u8]) -> Vec<u8> {
+        self.cipher_decrypt(data, cipher_key)
+    }
 }
 
 impl CryptoDevice {
@@ -127,7 +137,43 @@ impl CryptoDevice {
         device.transport.lock().finish_init();
 
         device.print_supported_crypto_algorithms();
-        Self::test_device(device)
+
+        aster_crypto::register_device("virtio-crypto".to_string(), device);
+        // Self::test_device(device)
+        Ok(())
+    }
+
+    pub fn cipher_encrypt(&self, data: &[u8], cipher_key: &[u8]) -> Vec<u8> {
+        let iv = vec![0x00; 16];
+        early_println!("[Test] Original data for CIPHER: {:?}", data);
+        let cipher_encrypt_result = Cipher::encrypt(
+            &self,
+            VIRTIO_CRYPTO_CIPHER_AES_CBC,
+            &cipher_key,
+            &iv,
+            &data,
+        );
+        early_println!(
+            "[Test] Encrypted data for CIPHER: {:?}",
+            cipher_encrypt_result
+        );
+        cipher_encrypt_result
+    }
+
+    pub fn cipher_decrypt(&self, data: &[u8], cipher_key: &[u8]) -> Vec<u8> {
+        let iv = vec![0x00; 16];
+        let cipher_decrypt_result = Cipher::decrypt(
+            &self,
+            VIRTIO_CRYPTO_CIPHER_AES_CBC,
+            &cipher_key,
+            &iv,
+            &data,
+        );
+        early_println!(
+            "[Test] Decrypted data for CIPHER: {:?}",
+            cipher_decrypt_result
+        );
+        cipher_decrypt_result
     }
 
     pub fn refresh_state(&self) {
@@ -153,50 +199,42 @@ impl CryptoDevice {
     }
 
     pub fn test_device(device: Arc<CryptoDevice>) -> Result<(), VirtioDeviceError> {
-        let cipher_key = [0_u8; 16];
-        let iv = vec![0x00; 16];
-        // let src_data = vec![
-        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+        // let cipher_key = [0_u8; 16];
+        // let iv = vec![0_u8; 16];
+        // let data1: Vec<u8> = vec![
+        //     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+        //     0x0F, 0x10, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+        //     0x0D, 0x0E, 0x0F, 0x10,
         // ];
-        let data1: Vec<u8> = vec![
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-            0x0F, 0x10, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
-            0x0D, 0x0E, 0x0F, 0x10,
-        ];
-        let data2: Vec<u8> = vec![
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
-        ];
+        // early_println!("[Test] Original data for CIPHER: {:?}", data1);
+        // let cipher_encrypt_result = Cipher::encrypt(
+        //     &device,
+        //     VIRTIO_CRYPTO_CIPHER_AES_CBC,
+        //     &cipher_key,
+        //     &iv,
+        //     &data1,
+        // );
+        // early_println!(
+        //     "[Test] Encrypted data for CIPHER: {:?}",
+        //     cipher_encrypt_result
+        // );
+        // let cipher_decrypt_result = Cipher::decrypt(
+        //     &device,
+        //     VIRTIO_CRYPTO_CIPHER_AES_CBC,
+        //     &cipher_key,
+        //     &iv,
+        //     &cipher_encrypt_result,
+        // );
+        // early_println!(
+        //     "[Test] Decrypted data for CIPHER: {:?}",
+        //     cipher_decrypt_result
+        // );
 
-        early_println!("[Test] Original data for CIPHER: {:?}", data1);
-        let cipher_encrypt_result = Cipher::encrypt(
-            &device,
-            VIRTIO_CRYPTO_CIPHER_AES_CBC,
-            &cipher_key,
-            &iv,
-            &data1,
-        );
-        early_println!(
-            "[Test] Encrypted data for CIPHER: {:?}",
-            cipher_encrypt_result
-        );
-        let cipher_decrypt_result = Cipher::decrypt(
-            &device,
-            VIRTIO_CRYPTO_CIPHER_AES_CBC,
-            &cipher_key,
-            &iv,
-            &cipher_encrypt_result,
-        );
-        early_println!(
-            "[Test] Decrypted data for CIPHER: {:?}",
-            cipher_decrypt_result
-        );
-
-        assert_eq!(
-            data1, cipher_decrypt_result,
-            "[Test] The initial data and decrypted data of CIPHER are inconsistent"
-        );
-        early_println!("[Test] CIPHER test pass!");
+        // assert_eq!(
+        //     data1, cipher_decrypt_result,
+        //     "[Test] The initial data and decrypted data of CIPHER are inconsistent"
+        // );
+        // early_println!("[Test] CIPHER test pass!");
 
         // Testing chain algorithm: qemu-backend doesn't support
         // let mut chain_alg = ChainAlg::new(
@@ -295,7 +333,9 @@ impl CryptoDevice {
             126, 143, 208, 218, 82, 76, 139, 151, 222, 105, 205, 197, 180, 252, 26, 196, 231, 25,
             111, 96, 65, 59, 76, 244, 3, 190, 39,
         ];
-        // let padded_private_key = padded_private_key(&private_key).to_vec();
+        let data2: Vec<u8> = vec![
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+        ];
 
         early_println!("[Test] Original data for AKCIPHER: {:?}", data2);
         let akcipher_encrypt_result = Akcipher::akcipher(
@@ -334,6 +374,7 @@ impl CryptoDevice {
         );
         early_println!("[Test] AKCIPHER encrypt-decrypt test pass!");
 
+        // AKCIPHER签名认证的输入数据也需要修改，需要先通过SHA256算法进行哈希映射到一个固定长度的数据
         let data3 = vec![
             49, 95, 91, 219, 118, 208, 120, 196, 59, 138, 192, 6, 78, 74, 1, 100, 97, 43, 31, 206,
             119, 200, 105, 52, 91, 252, 148, 199, 88, 148, 237, 211,

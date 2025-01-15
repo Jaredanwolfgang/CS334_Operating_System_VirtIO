@@ -1,5 +1,6 @@
+use aster_virtio::device::input;
 // SPDX-License-Identifier: MPL-2.0
-
+use ostd::{console::early_print, early_println};
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -7,6 +8,7 @@ use crate::{
         utils::{IoctlCmd, StatusFlags},
     },
     prelude::*,
+    crypto::crypto::{encrypt, decrypt},
 };
 
 pub fn sys_ioctl(fd: FileDesc, cmd: u32, arg: Vaddr, ctx: &Context) -> Result<SyscallReturn> {
@@ -56,7 +58,41 @@ pub fn sys_ioctl(fd: FileDesc, cmd: u32, arg: Vaddr, ctx: &Context) -> Result<Sy
             entry.set_flags(entry.flags() & (!FdFlags::CLOEXEC));
             0
         }
+        IoctlCmd::CIOCCRYPT => {
+            // Encrypt
+            let max_string_len = 256;
+            let input: CString = read_cstring_vec(arg, max_string_len, ctx)?;
+            let input_bytes: &[u8] = input.as_bytes();
+            encrypt(input_bytes);
+            0
+        }
+        IoctlCmd::CIOCXCRYPT => {
+            // Decrypt
+            decrypt();
+            0
+        }
         _ => file.ioctl(ioctl_cmd, arg)?,
     };
     Ok(SyscallReturn::Return(res as _))
+}
+
+fn read_cstring_vec(
+    read_ptr: Vaddr,
+    max_string_len: usize,
+    ctx: &Context,
+) -> Result<CString> {
+    let mut res = CString::default();
+    // On Linux, argv pointer and envp pointer can be specified as NULL.
+    if read_ptr == 0 {
+        return Ok(res);
+    }
+    let user_space = ctx.user_space();
+    let cstring_ptr = user_space.read_val::<usize>(read_ptr)?;
+    if cstring_ptr == 0 {
+        return_errno_with_message!(Errno::E2BIG, "Cannot find null pointer in vector");
+    }
+    let cstring = user_space.read_cstring(cstring_ptr, max_string_len)?;
+    early_println!("{:?} {:?}", cstring_ptr, cstring);
+    res = cstring;
+    Ok(res)
 }
