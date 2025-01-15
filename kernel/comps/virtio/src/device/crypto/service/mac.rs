@@ -1,9 +1,11 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, vec::Vec, vec};
 
 use bitflags::bitflags;
-use ostd::Pod;
+use ostd::{early_println, mm::{DmaStreamSlice, VmIo}, Pod};
 
-use crate::alloc::string::ToString;
+use crate::{alloc::string::ToString, device::crypto::{device::{CryptoDevice, SubmittedReq}, header::{VirtioCryptoCreateSessionInput, VirtioCryptoCtrlHeader, VirtioCryptoDestroySessionFlf, VirtioCryptoDestroySessionInput, VirtioCryptoInhdr, VirtioCryptoOpCtrlReqFlf, VirtioCryptoOpDataReq, VirtioCryptoOpHeader, VIRTIO_CRYPTO_HASH}, service::services::VIRTIO_CRYPTO_SERVICE_MAC}};
+
+use super::hash::{VirtioCryptoHashCreateSessionFlf, VirtioCryptoHashDataFlf};
 
 const VIRTIO_CRYPTO_NO_MAC: u32 = 0;
 const VIRTIO_CRYPTO_MAC_HMAC_MD5: u32 = 1;
@@ -117,8 +119,9 @@ pub struct VirtioCryptoMacCreateSessionFlf {
 }
 
 impl VirtioCryptoMacCreateSessionFlf {
-    pub fn new(algo: u32) -> Self {
-        let (hash_result_len, auth_key_len) = match algo {
+
+    pub fn get_hash_and_auth_len(algo: u32) -> (u32, u32) {
+        match algo {
             VIRTIO_CRYPTO_MAC_HMAC_MD5 => (16, 16),
             VIRTIO_CRYPTO_MAC_HMAC_SHA1 => (20, 20),
             VIRTIO_CRYPTO_MAC_HMAC_SHA_224 => (28, 28),
@@ -136,12 +139,312 @@ impl VirtioCryptoMacCreateSessionFlf {
             VIRTIO_CRYPTO_MAC_XCBC_AES => (16, 16),
             VIRTIO_CRYPTO_MAC_ZUC_EIA3 => (4, 16),
             _ => (0, 0),
-        };
+        }
+    }
+
+    pub fn new(algo: u32) -> Self {
+        let (hash_result_len, auth_key_len) = Self::get_hash_and_auth_len(algo);
         Self {
             algo,
             hash_result_len,
             auth_key_len,
             padding: 0,
         }
+    }
+}
+
+pub struct Mac {
+
+}
+
+impl Mac {
+    pub fn send_create_session_request(
+        device: &CryptoDevice,
+        algo: u32,
+        auth_key: &[u8],
+    ) -> (u32, u16) {
+        // TODO_RAY: 检查service和algo的合法性
+
+        let (hash_result_len, auth_key_len) = VirtioCryptoMacCreateSessionFlf::get_hash_and_auth_len(algo);
+        assert_eq!(auth_key_len, auth_key.len() as u32, "auth_key_len inconsistent with algo");
+
+        // 分配空间
+        let req_size = VirtioCryptoOpCtrlReqFlf::SIZE + auth_key.len();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_size)
+            .unwrap();
+
+        let req_flf_slice = {
+            let req_flf_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head,
+                VirtioCryptoOpCtrlReqFlf::SIZE,
+            );
+
+            let header = VirtioCryptoCtrlHeader::new(
+                VIRTIO_CRYPTO_SERVICE_MAC,
+                algo,
+                VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_CREATE_SESSION,
+            );
+
+            let op_flf = VirtioCryptoMacCreateSessionFlf::new(algo);
+
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, op_flf.as_bytes());
+
+            req_flf_slice.write_val(0, &req_flf).unwrap();
+            req_flf_slice.sync().unwrap();
+            req_flf_slice
+        };
+
+        let req_vlf_slice = {
+            let req_vlf_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head + VirtioCryptoOpCtrlReqFlf::SIZE,
+                auth_key.len(),
+            );
+            req_vlf_slice.write_bytes(0, auth_key).unwrap();
+            req_vlf_slice
+        };
+
+        let req_slice_vec = vec![&req_flf_slice, &req_vlf_slice];
+
+        let resp_size = VirtioCryptoCreateSessionInput::SIZE;
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_size)
+            .unwrap();
+
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(
+                &device.response_buffer,
+                resp_slice_record.head,
+                VirtioCryptoCreateSessionInput::SIZE,
+            );
+            resp_slice
+                .write_val(0, &VirtioCryptoCreateSessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.controlq.disable_irq().lock();
+
+        let token = queue
+            .add_dma_buf(req_slice_vec.as_slice(), &[&resp_slice])
+            .expect("add queue failed");
+
+        device
+            .controlq_manager
+            .disable_irq()
+            .lock()
+            .add(SubmittedReq::new(
+                token,
+                req_slice_record,
+                resp_slice_record,
+                false,
+                0,
+            ));
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    pub fn send_destroy_session_request(device: &CryptoDevice, session_id: u64) -> (u32, u16) {
+        // TODO_RAY: 检查service和algo的合法性
+
+        let req_slice_size = VirtioCryptoOpCtrlReqFlf::SIZE;
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
+
+        let req_slice = {
+            let req_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head,
+                VirtioCryptoOpCtrlReqFlf::SIZE,
+            );
+            let header = VirtioCryptoCtrlHeader::new(
+                VIRTIO_CRYPTO_SERVICE_MAC,
+                0,
+                VirtioCryptoCtrlHeader::VIRTIO_CRYPTO_DESTROY_SESSION,
+            );
+            let destroy_session_flf = VirtioCryptoDestroySessionFlf::new(session_id);
+            let req_flf = VirtioCryptoOpCtrlReqFlf::new(header, destroy_session_flf.as_bytes());
+
+            req_slice.write_val(0, &req_flf).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+
+        let resp_slice_size = VirtioCryptoDestroySessionInput::SIZE;
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
+
+        let resp_slice = {
+            let resp_slice = DmaStreamSlice::new(
+                &device.response_buffer,
+                resp_slice_record.head,
+                VirtioCryptoDestroySessionInput::SIZE,
+            );
+            resp_slice
+                .write_val(0, &VirtioCryptoDestroySessionInput::default())
+                .unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.controlq.disable_irq().lock();
+
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        device
+            .controlq_manager
+            .disable_irq()
+            .lock()
+            .add(SubmittedReq::new(
+                token,
+                req_slice_record,
+                resp_slice_record,
+                false,
+                0,
+            ));
+
+        (CryptoDevice::CONTROLQ, token)
+    }
+
+    pub fn create_session(
+        device: &CryptoDevice,
+        algo: u32,
+        auth_key: &[u8],
+    ) -> u64 {
+        let (queue_index, token) = Self::send_create_session_request(device, algo, auth_key);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
+        let resp: VirtioCryptoCreateSessionInput = resp_slice.read_val(0).unwrap();
+        resp.session_id
+    }
+
+    pub fn destroy_session(device: &CryptoDevice, session_id: u64) {
+        let (queue_index, token) = Self::send_destroy_session_request(device, session_id);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
+        resp_slice.sync().unwrap();
+        let _resp: VirtioCryptoDestroySessionInput = resp_slice.read_val(0).unwrap();
+    }
+
+    pub fn send_mac_request(device: &CryptoDevice, algo: u32, session_id: u64, src_data: &Vec<u8>) -> (u32, u16) {
+        let req_slice_size = VirtioCryptoOpDataReq::SIZE + src_data.len();
+        let req_slice_record = device
+            .request_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(req_slice_size)
+            .unwrap();
+
+        let req_slice = {
+
+            let opcode = VIRTIO_CRYPTO_HASH;
+
+            let header = VirtioCryptoOpHeader {
+                opcode,
+                algo,
+                session_id,
+                flag: 0,
+                padding: 0,
+            };
+
+            let hash_data_flf = VirtioCryptoHashDataFlf::new(src_data.len() as u32, algo);
+            let crypto_req = VirtioCryptoOpDataReq::new(header, hash_data_flf.as_bytes());
+            let combined_req = [crypto_req.as_bytes(), src_data.as_slice()].concat();
+
+            let req_slice = DmaStreamSlice::new(
+                &device.request_buffer,
+                req_slice_record.head,
+                req_slice_size,
+            );
+            req_slice.write_bytes(0, combined_req.as_slice()).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        };
+
+        let dst_data = vec![0; VirtioCryptoHashCreateSessionFlf::get_hash_result_len(algo) as usize];
+        let inhdr = VirtioCryptoInhdr::default();
+
+        let resp_slice_size = dst_data.len() + VirtioCryptoInhdr::SIZE as usize;
+        let resp_slice_record = device
+            .response_buffer_allocator
+            .disable_irq()
+            .lock()
+            .allocate(resp_slice_size)
+            .unwrap();
+
+        let resp_slice = {
+            let combined_resp = [dst_data.as_slice(), inhdr.as_bytes()].concat();
+
+            let resp_slice = DmaStreamSlice::new(
+                &device.response_buffer,
+                resp_slice_record.head,
+                resp_slice_size,
+            );
+            resp_slice.write_bytes(0, combined_resp.as_slice()).unwrap();
+            resp_slice
+        };
+
+        let mut queue = device.dataqs[0].disable_irq().lock();
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+
+        if queue.should_notify() {
+            queue.notify();
+        }
+
+        device
+            .dataq_manager
+            .disable_irq()
+            .lock()
+            .add(SubmittedReq::new(
+                token,
+                req_slice_record,
+                resp_slice_record,
+                false,
+                0,
+            ));
+
+        (CryptoDevice::DATAQ, token)
+    }
+
+    pub fn do_mac(device: &CryptoDevice, algo: u32, session_id: u64, src_data: &Vec<u8>) -> Vec<u8> {
+        let (queue_index, token) = Self::send_mac_request(device, algo, session_id, src_data);
+        let (resp_slice, _write_len) = device.get_resp_slice_from(queue_index, token);
+        let mut binding = vec![0_u8; VirtioCryptoHashCreateSessionFlf::get_hash_result_len(algo) as usize];
+        let result = binding.as_mut_slice();
+        resp_slice.read_bytes(0, result).unwrap();
+        early_println!("Data: {:X?}", result);
+        result.to_vec()
+    }
+
+    pub fn mac(device: &CryptoDevice, algo: u32, auth_key: &[u8], src_data: &Vec<u8>) -> Vec<u8> {
+        let session_id = Self::create_session(device, algo, auth_key);
+        let dst_data = Self::do_mac(device, algo, session_id, src_data);
+        Self::destroy_session(device, session_id);
+        dst_data
     }
 }
