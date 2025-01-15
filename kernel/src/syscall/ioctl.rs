@@ -1,6 +1,5 @@
-use aster_virtio::device::input;
 // SPDX-License-Identifier: MPL-2.0
-use ostd::{console::early_print, early_println};
+use ostd::early_println;
 use super::SyscallReturn;
 use crate::{
     fs::{
