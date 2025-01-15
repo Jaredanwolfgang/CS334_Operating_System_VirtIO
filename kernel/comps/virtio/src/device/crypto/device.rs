@@ -138,8 +138,10 @@ impl CryptoDevice {
 
         device.print_supported_crypto_algorithms();
 
+        let cloned_device = device.clone();
+
         aster_crypto::register_device("virtio-crypto".to_string(), device);
-        // Self::test_device(device)
+        Self::test_device(cloned_device);
         Ok(())
     }
 
