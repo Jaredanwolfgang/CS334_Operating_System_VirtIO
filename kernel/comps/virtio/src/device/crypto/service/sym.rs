@@ -1,10 +1,9 @@
 use alloc::{string::String, vec, vec::Vec};
-use core::hint::spin_loop;
 
 use bitflags::bitflags;
 use ostd::{
     early_println,
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo},
+    mm::{DmaStreamSlice, VmIo},
     Pod,
 };
 
