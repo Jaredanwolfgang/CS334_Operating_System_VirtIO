@@ -3,7 +3,6 @@ use core::panic;
 
 use ostd::Pod;
 
-use super::service::sym::VirtioCryptoSymDataFlf;
 use crate::device::crypto::service::services::{
     VIRTIO_CRYPTO_SERVICE_AEAD, VIRTIO_CRYPTO_SERVICE_AKCIPHER, VIRTIO_CRYPTO_SERVICE_CIPHER,
     VIRTIO_CRYPTO_SERVICE_HASH, VIRTIO_CRYPTO_SERVICE_MAC,

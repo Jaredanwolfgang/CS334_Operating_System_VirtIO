@@ -141,7 +141,7 @@ impl CryptoDevice {
         let cloned_device = device.clone();
 
         aster_crypto::register_device("virtio-crypto".to_string(), device);
-        Self::test_device(cloned_device);
+        let _ = Self::test_device(cloned_device);
         Ok(())
     }
 

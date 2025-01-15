@@ -165,7 +165,7 @@ impl Mac {
     ) -> (u32, u16) {
         // TODO_RAY: 检查service和algo的合法性
 
-        let (hash_result_len, auth_key_len) = VirtioCryptoMacCreateSessionFlf::get_hash_and_auth_len(algo);
+        let (_hash_result_len, auth_key_len) = VirtioCryptoMacCreateSessionFlf::get_hash_and_auth_len(algo);
         assert_eq!(auth_key_len, auth_key.len() as u32, "auth_key_len inconsistent with algo");
 
         // 分配空间
