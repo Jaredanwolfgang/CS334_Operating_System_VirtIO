@@ -3,20 +3,22 @@
 This is a simple implementation of a VirtIO crypto device. The device is a PCI device that can be used to encrypt and decrypt data. The device is implemented in QEMU.
 
 The current TODO list is as follows:
-- [ ] Symmetric Algorithm
+- [x] Symmetric Algorithm
     - [x] Cipher
         - [x] Encryption
         - [x] Decryption
-    - [ ] Chain Algorithm
-        - [ ] Hash Algorithm
-            - [ ] Encryption
-            - [ ] Decryption
-        - [ ] MAC Algorithm
-            - [ ] Encryption
-            - [ ] Decryption
+    - [x] Chain Algorithm
+        - [x] Hash Algorithm
+            - [x] Encryption
+            - [x] Decryption
+        - [x] MAC Algorithm
+            - [x] Encryption
+            - [x] Decryption
 - [x] AKCIPHER Algorithm
     - [x] Encryption
     - [x] Decryption
     - [x] Sign
     - [x] Verify
-- [ ] Writing Test Cases
+- [x] Writing Test Cases
+- [x] Asynchronous Request
+- [x] User Call

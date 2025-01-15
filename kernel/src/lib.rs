@@ -9,6 +9,7 @@
 #![allow(incomplete_features)]
 #![feature(btree_cursors)]
 #![feature(btree_extract_if)]
+#![feature(debug_closure_helpers)]
 #![feature(extend_one)]
 #![feature(fn_traits)]
 #![feature(format_args_nl)]
@@ -29,15 +30,13 @@
 #![feature(trait_upcasting)]
 #![register_tool(component_access_control)]
 
-use core::sync::atomic::Ordering;
-
+use kcmdline::KCmdlineArg;
 use ostd::{
     arch::qemu::{exit_qemu, QemuExitCode},
-    boot,
-    cpu::PinCurrentCpu,
+    boot::boot_info,
+    cpu::{CpuId, CpuSet, PinCurrentCpu},
 };
 use process::Process;
-use sched::priority::PriorityRange;
 
 use crate::{
     prelude::*,
@@ -53,7 +52,6 @@ extern crate controlled;
 extern crate getset;
 
 pub mod arch;
-pub mod console;
 pub mod context;
 pub mod cpu;
 pub mod device;
@@ -62,6 +60,7 @@ pub mod error;
 pub mod events;
 pub mod fs;
 pub mod ipc;
+pub mod kcmdline;
 pub mod net;
 pub mod prelude;
 mod process;
@@ -80,14 +79,16 @@ pub fn main() {
     ostd::early_println!("[kernel] OSTD initialized. Preparing components.");
     component::init_all(component::parse_metadata!()).unwrap();
     init();
-    ostd::IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 
     // Spawn all AP idle threads.
     ostd::boot::smp::register_ap_entry(ap_init);
 
     // Spawn the first kernel thread on BSP.
+    let mut affinity = CpuSet::new_empty();
+    affinity.add(CpuId::bsp());
     ThreadOptions::new(init_thread)
-        .priority(Priority::new(PriorityRange::new(PriorityRange::MAX)))
+        .priority(Priority::idle())
+        .cpu_affinity(affinity)
         .spawn();
 }
 
@@ -98,7 +99,7 @@ pub fn init() {
     #[cfg(target_arch = "x86_64")]
     net::init();
     sched::init();
-    fs::rootfs::init(boot::initramfs()).unwrap();
+    fs::rootfs::init(boot_info().initramfs.expect("No initramfs found!")).unwrap();
     device::init().unwrap();
     syscall::init();
     vdso::init();
@@ -121,7 +122,7 @@ fn ap_init() {
 
     ThreadOptions::new(ap_idle_thread)
         .cpu_affinity(cpu_id.into())
-        .priority(Priority::new(PriorityRange::new(PriorityRange::MAX)))
+        .priority(Priority::idle())
         .spawn();
 }
 
@@ -143,7 +144,7 @@ fn init_thread() {
 
     print_banner();
 
-    let karg = boot::kernel_cmdline();
+    let karg: KCmdlineArg = boot_info().kernel_cmdline.as_str().into();
 
     let initproc = Process::spawn_user_process(
         karg.get_initproc_path().unwrap(),
@@ -152,14 +153,14 @@ fn init_thread() {
     )
     .expect("Run init process failed.");
     // Wait till initproc become zombie.
-    while !initproc.is_zombie() {
+    while !initproc.status().is_zombie() {
         // We don't have preemptive scheduler now.
         // The long running init thread should yield its own execution to allow other tasks to go on.
         Thread::yield_now();
     }
 
     // TODO: exit via qemu isa debug device should not be the only way.
-    let exit_code = if initproc.exit_code() == 0 {
+    let exit_code = if initproc.status().exit_code() == 0 {
         QemuExitCode::Success
     } else {
         QemuExitCode::Failed

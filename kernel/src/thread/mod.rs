@@ -12,7 +12,10 @@ use ostd::{
 use self::status::{AtomicThreadStatus, ThreadStatus};
 use crate::{
     prelude::*,
-    sched::priority::{AtomicPriority, Priority},
+    sched::{
+        priority::{AtomicPriority, Priority},
+        SchedAttr,
+    },
 };
 
 pub mod exception;
@@ -40,6 +43,7 @@ pub struct Thread {
     priority: AtomicPriority,
     /// Thread CPU affinity
     cpu_affinity: AtomicCpuSet,
+    sched_attr: SchedAttr,
 }
 
 impl Thread {
@@ -47,16 +51,16 @@ impl Thread {
     pub fn new(
         task: Weak<Task>,
         data: impl Send + Sync + Any,
-        status: ThreadStatus,
         priority: Priority,
         cpu_affinity: CpuSet,
     ) -> Self {
         Thread {
             task,
             data: Box::new(data),
-            status: AtomicThreadStatus::new(status),
+            status: AtomicThreadStatus::new(ThreadStatus::Init),
             priority: AtomicPriority::new(priority),
             cpu_affinity: AtomicCpuSet::new(cpu_affinity),
+            sched_attr: SchedAttr::new(priority.into()),
         }
     }
 
@@ -74,6 +78,7 @@ impl Thread {
     }
 
     /// Runs this thread at once.
+    #[track_caller]
     pub fn run(&self) {
         self.status.store(ThreadStatus::Running, Ordering::Release);
         self.task.upgrade().unwrap().run();
@@ -140,9 +145,14 @@ impl Thread {
         &self.cpu_affinity
     }
 
+    pub fn sched_attr(&self) -> &SchedAttr {
+        &self.sched_attr
+    }
+
     /// Yields the execution to another thread.
     ///
     /// This method will return once the current thread is scheduled again.
+    #[track_caller]
     pub fn yield_now() {
         Task::yield_now()
     }
@@ -150,6 +160,7 @@ impl Thread {
     /// Joins the execution of the thread.
     ///
     /// This method will return after the thread exits.
+    #[track_caller]
     pub fn join(&self) {
         while !self.is_exited() {
             Self::yield_now();
