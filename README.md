@@ -20,6 +20,9 @@ The current TODO list is as follows:
     - [x] Sign
     - [x] Verify
 - [x] Writing Test Cases
+- [x] Asynchronous Request
+- [x] User Call
+
 ## Introducing Asterinas
 
 Asterinas is a _secure_, _fast_, and _general-purpose_ OS kernel
