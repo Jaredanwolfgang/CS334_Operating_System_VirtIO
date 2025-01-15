@@ -332,10 +332,9 @@ pub struct VirtioCryptoOpDataReq {
 
 impl VirtioCryptoOpDataReq {
     pub const SIZE: usize = size_of::<VirtioCryptoOpDataReq>();
-    pub fn new(header: VirtioCryptoOpHeader, op_flf: VirtioCryptoSymDataFlf) -> Self {
+    pub fn new(header: VirtioCryptoOpHeader, op_flf: &[u8]) -> Self {
         let mut op_flf_bytes = [0; VIRTIO_CRYPTO_DATAQ_OP_SPEC_HDR_LEGACY as usize];
-        let op_flf_bytes_slice = op_flf.as_bytes();
-        op_flf_bytes[..op_flf_bytes_slice.len()].copy_from_slice(op_flf_bytes_slice);
+        op_flf_bytes[..op_flf.len()].copy_from_slice(op_flf);
         Self {
             header,
             op_flf: op_flf_bytes,

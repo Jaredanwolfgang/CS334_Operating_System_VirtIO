@@ -342,7 +342,7 @@ impl Cipher {
                 };
                 VirtioCryptoSymDataFlf::new(crypto_data_flf.as_bytes(), VIRTIO_CRYPTO_SYM_OP_CIPHER)
             };
-            let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf);
+            let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf.as_bytes());
             let combined_req = [crypto_req.as_bytes(), iv.as_slice(), src_data.as_slice()].concat();
 
             let req_slice = DmaStreamSlice::new(
@@ -857,7 +857,7 @@ impl ChainAlg {
                     VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING,
                 )
             };
-            let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf);
+            let crypto_req = VirtioCryptoOpDataReq::new(header, sym_data_flf.as_bytes());
             req_slice.write_val(0, &crypto_req).unwrap();
             req_slice.sync().unwrap();
             req_slice
